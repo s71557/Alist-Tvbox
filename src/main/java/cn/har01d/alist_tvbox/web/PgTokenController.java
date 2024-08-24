@@ -7,8 +7,9 @@ import cn.har01d.alist_tvbox.entity.SettingRepository;
 import cn.har01d.alist_tvbox.entity.ShareRepository;
 import cn.har01d.alist_tvbox.service.SubscriptionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -18,6 +19,7 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 
+@Slf4j
 @RestController
 @RequestMapping("/pg")
 public class PgTokenController {
@@ -38,12 +40,7 @@ public class PgTokenController {
     }
 
     @GetMapping("/lib/tokenm")
-    public Map<String, Object> tokenm() throws IOException {
-        return tokenm("");
-    }
-
-    @GetMapping("/lib/tokenm/{token}")
-    public Map<String, Object> tokenm(@PathVariable String token) throws IOException {
+    public Map<String, Object> tokenm(String token) throws IOException {
         subscriptionService.checkToken(token);
 
         Map<String, Object> map = new HashMap<>();
