@@ -1,5 +1,6 @@
 package cn.har01d.alist_tvbox.service;
 
+import cn.har01d.alist_tvbox.dto.bili.Sub;
 import cn.har01d.alist_tvbox.dto.emby.EmbyInfo;
 import cn.har01d.alist_tvbox.dto.emby.EmbyItem;
 import cn.har01d.alist_tvbox.dto.emby.EmbyItems;
@@ -407,12 +408,37 @@ public class EmbyService {
         String url = emby.getUrl() + "/emby/Items/" + parts[1] + "/PlaybackInfo?IsPlayback=false&AutoOpenLiveStream=false&StartTimeTicks=0&MaxStreamingBitrate=2147483647&UserId=" + info.getUser().getId();
         var media = restTemplate.exchange(url, HttpMethod.POST, entity, EmbyMediaSources.class).getBody();
 
+        List<String> urls = new ArrayList<>();
+        for (var source : media.getItems()) {
+            urls.add(source.getName());
+            urls.add(emby.getUrl() + source.getUrl());
+        }
         Map<String, Object> result = new HashMap<>();
-        result.put("url", emby.getUrl() + media.getItems().get(0).getUrl());
+        result.put("url", urls);
+        result.put("subs", getSubtitles(emby, media.getItems().get(0)));
         result.put("header", "{\"User-Agent\": \"" + Constants.USER_AGENT + "\"}");
         result.put("parse", 0);
         log.debug("{}", result);
         return result;
+    }
+
+    private List<Sub> getSubtitles(Emby emby, EmbyMediaSources.MediaSources mediaSources) {
+        List<Sub> list = new ArrayList<>();
+        for (EmbyMediaSources.MediaStreams stream : mediaSources.getMediaStreams()) {
+            if ("Subtitle".equals(stream.getType()) && stream.getUrl() != null) {
+                Sub sub = new Sub();
+                sub.setName(stream.getTitle());
+                sub.setLang(stream.getLanguage());
+                if ("ass".equals(stream.getCodec())) {
+                    sub.setFormat("text/x-ssa");
+                } else {
+                    sub.setFormat("application/x-subrip");
+                }
+                sub.setUrl(emby.getUrl() + stream.getUrl());
+                list.add(sub);
+            }
+        }
+        return list;
     }
 
     private EmbyInfo getEmbyInfo(Emby emby) {
