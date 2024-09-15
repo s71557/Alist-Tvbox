@@ -1,20 +1,10 @@
 package cn.har01d.alist_tvbox.service;
 
 import cn.har01d.alist_tvbox.config.AppProperties;
+import cn.har01d.alist_tvbox.domain.DriverType;
 import cn.har01d.alist_tvbox.dto.OpenApiDto;
 import cn.har01d.alist_tvbox.dto.SharesDto;
-import cn.har01d.alist_tvbox.entity.AListAlias;
-import cn.har01d.alist_tvbox.entity.AListAliasRepository;
-import cn.har01d.alist_tvbox.entity.Account;
-import cn.har01d.alist_tvbox.entity.AccountRepository;
-import cn.har01d.alist_tvbox.entity.PikPakAccount;
-import cn.har01d.alist_tvbox.entity.PikPakAccountRepository;
-import cn.har01d.alist_tvbox.entity.Setting;
-import cn.har01d.alist_tvbox.entity.SettingRepository;
-import cn.har01d.alist_tvbox.entity.Share;
-import cn.har01d.alist_tvbox.entity.ShareRepository;
-import cn.har01d.alist_tvbox.entity.Site;
-import cn.har01d.alist_tvbox.entity.SiteRepository;
+import cn.har01d.alist_tvbox.entity.*;
 import cn.har01d.alist_tvbox.exception.BadRequestException;
 import cn.har01d.alist_tvbox.model.LoginRequest;
 import cn.har01d.alist_tvbox.model.LoginResponse;
@@ -68,10 +58,12 @@ public class ShareService {
     private final SiteRepository siteRepository;
     private final AccountRepository accountRepository;
     private final PikPakAccountRepository pikPakAccountRepository;
+    private final PanAccountRepository panAccountRepository;
     private final AccountService accountService;
     private final AListLocalService aListLocalService;
     private final ConfigFileService configFileService;
     private final PikPakService pikPakService;
+    private final PanAccountService panAccountService;
     private final RestTemplate restTemplate;
     private final RestTemplate restTemplate1;
     private final Environment environment;
@@ -85,6 +77,8 @@ public class ShareService {
                         SiteRepository siteRepository,
                         AccountRepository accountRepository,
                         PikPakAccountRepository pikPakAccountRepository,
+                        PanAccountRepository panAccountRepository,
+                        PanAccountService panAccountService,
                         AppProperties appProperties,
                         AccountService accountService,
                         AListLocalService aListLocalService,
@@ -99,6 +93,8 @@ public class ShareService {
         this.siteRepository = siteRepository;
         this.accountRepository = accountRepository;
         this.pikPakAccountRepository = pikPakAccountRepository;
+        this.panAccountRepository = panAccountRepository;
+        this.panAccountService = panAccountService;
         this.accountService = accountService;
         this.aListLocalService = aListLocalService;
         this.configFileService = configFileService;
@@ -117,6 +113,7 @@ public class ShareService {
         loadOpenTokenUrl();
 
         pikPakService.readPikPak();
+        panAccountService.loadStorages();
 
         List<Share> list = shareRepository.findAll();
         if (list.isEmpty()) {
@@ -398,21 +395,6 @@ public class ShareService {
                         int count = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getFolderId(), account2.getUsername(), account2.getPassword(), share.getShareId(), share.getPassword()));
                         pikpak = true;
                         log.info("insert Share {} {}: {}, result: {}", share.getId(), share.getShareId(), getMountPath(share), count);
-                    } else if (share.getType() == 2) {
-                        String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'Quark',30,'work','{\"cookie\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'native_proxy','');";
-                        int count = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getCookie(), share.getFolderId()));
-                        log.info("insert Share {} : {}, result: {}", share.getId(), getMountPath(share), count);
-                        Utils.executeUpdate("INSERT INTO x_setting_items VALUES('quark_cookie','" + share.getCookie() + "','','text','',1,0);");
-                    } else if (share.getType() == 6) {
-                        String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'UC',30,'work','{\"cookie\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'native_proxy','');";
-                        int count = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getCookie(), share.getFolderId()));
-                        log.info("insert Share {} : {}, result: {}", share.getId(), getMountPath(share), count);
-                        Utils.executeUpdate("INSERT INTO x_setting_items VALUES('uc_cookie','" + share.getCookie() + "','','text','',1,0);");
-                    } else if (share.getType() == 3) {
-                        String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'115 Cloud',30,'work','{\"cookie\":\"%s\",\"qrcode_token\":\"%s\",\"root_folder_id\":\"%s\",\"page_size\":56}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','');";
-                        int count = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getCookie(), share.getPassword(), share.getFolderId()));
-                        log.info("insert Share {} {}: {}, result: {}", share.getId(), share.getShareId(), getMountPath(share), count);
-                        Utils.executeUpdate("INSERT INTO x_setting_items VALUES('115_cookie','" + share.getCookie() + "','','text','',1,0);");
                     } else if (share.getType() == 8) {
                         String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'115 Share',30,'work','{\"share_code\":\"%s\",\"receive_code\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','');";
                         int count = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getShareId(), share.getPassword(), share.getFolderId()));
@@ -551,7 +533,7 @@ public class ShareService {
     public String getQuarkCookie(String id) {
         String aliSecret = settingRepository.findById(ALI_SECRET).map(Setting::getValue).orElse("");
         if (aliSecret.equals(id)) {
-            return shareRepository.findByType(2).stream().findFirst().map(Share::getCookie).orElse("").trim();
+            return panAccountRepository.findByTypeAndMasterTrue(DriverType.QUARK).map(PanAccount::getCookie).orElse("").trim();
         }
         return "";
     }
@@ -559,7 +541,7 @@ public class ShareService {
     public String getUcCookie(String id) {
         String aliSecret = settingRepository.findById(ALI_SECRET).map(Setting::getValue).orElse("");
         if (aliSecret.equals(id)) {
-            return shareRepository.findByType(6).stream().findFirst().map(Share::getCookie).orElse("").trim();
+            return panAccountRepository.findByTypeAndMasterTrue(DriverType.UC).map(PanAccount::getCookie).orElse("").trim();
         }
         return "";
     }
@@ -567,7 +549,7 @@ public class ShareService {
     public String get115Cookie(String id) {
         String aliSecret = settingRepository.findById(ALI_SECRET).map(Setting::getValue).orElse("");
         if (aliSecret.equals(id)) {
-            return shareRepository.findByType(3).stream().findFirst().map(Share::getCookie).orElse("").trim();
+            return panAccountRepository.findByTypeAndMasterTrue(DriverType.PAN115).map(PanAccount::getCookie).orElse("").trim();
         }
         return "";
     }
@@ -633,21 +615,6 @@ public class ShareService {
                 PikPakAccount account = pikPakAccountRepository.getFirstByMasterTrue().orElseThrow(BadRequestException::new);
                 String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'PikPakShare',30,'work','{\"root_folder_id\":\"%s\",\"username\":\"%s\",\"password\":\"%s\",\"share_id\":\"%s\",\"share_pwd\":\"%s\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
                 result = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getFolderId(), account.getUsername(), account.getPassword(), share.getShareId(), share.getPassword()));
-            } else if (share.getType() == 2) {
-                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'Quark',30,'work','{\"cookie\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'native_proxy','',0);";
-                int count = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getCookie(), share.getFolderId()));
-                log.info("insert Share {} : {}, result: {}", share.getId(), getMountPath(share), count);
-                updateCookieByApi("quark_cookie", share.getCookie());
-            } else if (share.getType() == 6) {
-                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'UC',30,'work','{\"cookie\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'native_proxy','',0);";
-                int count = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getCookie(), share.getFolderId()));
-                log.info("insert Share {} : {}, result: {}", share.getId(), getMountPath(share), count);
-                updateCookieByApi("uc_cookie", share.getCookie());
-            } else if (share.getType() == 3) {
-                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'115 Cloud',30,'work','{\"cookie\":\"%s\",\"qrcode_token\":\"%s\",\"root_folder_id\":\"%s\",\"page_size\":56}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
-                int count = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getCookie(), share.getPassword(), share.getFolderId()));
-                log.info("insert Share {} : {}, result: {}", share.getId(), getMountPath(share), count);
-                updateCookieByApi("115_cookie", share.getCookie());
             } else if (share.getType() == 8) {
                 String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'115 Share',30,'work','{\"share_code\":\"%s\",\"receive_code\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
                 result = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getShareId(), share.getPassword(), share.getFolderId()));
@@ -694,21 +661,6 @@ public class ShareService {
                 PikPakAccount account = pikPakAccountRepository.getFirstByMasterTrue().orElseThrow(BadRequestException::new);
                 String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'PikPakShare',30,'work','{\"root_folder_id\":\"%s\",\"username\":\"%s\",\"password\":\"%s\",\"share_id\":\"%s\",\"share_pwd\":\"%s\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
                 result = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getFolderId(), account.getUsername(), account.getPassword(), share.getShareId(), share.getPassword()));
-            } else if (share.getType() == 2) {
-                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'Quark',30,'work','{\"cookie\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'native_proxy','',0);";
-                int count = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getCookie(), share.getFolderId()));
-                log.info("insert Share {} : {}, result: {}", share.getId(), getMountPath(share), count);
-                updateCookieByApi("quark_cookie", share.getCookie());
-            } else if (share.getType() == 6) {
-                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'UC',30,'work','{\"cookie\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'native_proxy','',0);";
-                int count = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getCookie(), share.getFolderId()));
-                log.info("insert Share {} : {}, result: {}", share.getId(), getMountPath(share), count);
-                updateCookieByApi("uc_cookie", share.getCookie());
-            } else if (share.getType() == 3) {
-                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'115 Cloud',30,'work','{\"cookie\":\"%s\",\"qrcode_token\":\"%s\",\"root_folder_id\":\"%s\",\"page_size\":56}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
-                int count = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getCookie(), share.getPassword(), share.getFolderId()));
-                log.info("insert Share {} {}: {}, result: {}", share.getId(), share.getShareId(), getMountPath(share), count);
-                updateCookieByApi("115_cookie", share.getCookie());
             } else if (share.getType() == 8) {
                 String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'115 Share',30,'work','{\"share_code\":\"%s\",\"receive_code\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
                 result = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getShareId(), share.getPassword(), share.getFolderId()));
@@ -865,9 +817,9 @@ public class ShareService {
             Share share = new Share();
             share.setType(0);
             share.setId(7001);
-            share.setShareId("mxAfB6eRgY4");
-            share.setFolderId("63833bb670c164d4eeb14aa09c62ee770d9112ba");
-            share.setPath("/\uD83C\uDE34我的阿里分享/近期更新");
+            share.setShareId("dieULBdYP3D");
+            share.setFolderId("633c26e2666fd0e679a5455d92c66f9dd13c6d35");
+            share.setPath("/\uD83C\uDE34我的阿里分享/YYDSVIP电视剧");
             shares.add(shareRepository.save(share));
         } catch (Exception e) {
             log.warn("", e);
@@ -887,30 +839,4 @@ public class ShareService {
         return shares;
     }
 
-    @Scheduled(initialDelay = 1800_000, fixedDelay = 1800_000)
-    public void syncCookies() {
-        if (aListLocalService.getAListStatus() != 2) {
-            return;
-        }
-        var cookie = aListLocalService.getSetting("quark_cookie");
-        log.debug("quark_cookie={}", cookie);
-        saveCookie(2, cookie);
-        cookie = aListLocalService.getSetting("uc_cookie");
-        log.debug("uc_cookie={}", cookie);
-        saveCookie(6, cookie);
-        cookie = aListLocalService.getSetting("115_cookie");
-        log.debug("115_cookie={}", cookie);
-        saveCookie(3, cookie);
-    }
-
-    private void saveCookie(int type, SettingResponse response) {
-        if (response.getCode() == 200) {
-            List<Share> shares = shareRepository.findByType(type);
-            if (!shares.isEmpty()) {
-                Share share = shares.get(shares.size() - 1);
-                share.setCookie(response.getData().getValue());
-                shareRepository.save(share);
-            }
-        }
-    }
 }

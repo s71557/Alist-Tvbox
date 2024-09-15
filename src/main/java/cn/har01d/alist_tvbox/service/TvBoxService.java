@@ -1,25 +1,12 @@
 package cn.har01d.alist_tvbox.service;
 
 import cn.har01d.alist_tvbox.config.AppProperties;
+import cn.har01d.alist_tvbox.domain.DriverType;
 import cn.har01d.alist_tvbox.dto.Subtitle;
-import cn.har01d.alist_tvbox.entity.AListAlias;
-import cn.har01d.alist_tvbox.entity.AListAliasRepository;
-import cn.har01d.alist_tvbox.entity.Account;
-import cn.har01d.alist_tvbox.entity.AccountRepository;
-import cn.har01d.alist_tvbox.entity.Meta;
-import cn.har01d.alist_tvbox.entity.MetaRepository;
-import cn.har01d.alist_tvbox.entity.Movie;
-import cn.har01d.alist_tvbox.entity.ShareRepository;
-import cn.har01d.alist_tvbox.entity.Site;
-import cn.har01d.alist_tvbox.entity.Tmdb;
+import cn.har01d.alist_tvbox.entity.*;
 import cn.har01d.alist_tvbox.exception.BadRequestException;
 import cn.har01d.alist_tvbox.exception.NotFoundException;
-import cn.har01d.alist_tvbox.model.FileNameInfo;
-import cn.har01d.alist_tvbox.model.Filter;
-import cn.har01d.alist_tvbox.model.FilterValue;
-import cn.har01d.alist_tvbox.model.FsDetail;
-import cn.har01d.alist_tvbox.model.FsInfo;
-import cn.har01d.alist_tvbox.model.FsResponse;
+import cn.har01d.alist_tvbox.model.*;
 import cn.har01d.alist_tvbox.tvbox.Category;
 import cn.har01d.alist_tvbox.tvbox.CategoryList;
 import cn.har01d.alist_tvbox.tvbox.MovieDetail;
@@ -37,11 +24,7 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.springframework.core.env.Environment;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -55,26 +38,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import static cn.har01d.alist_tvbox.util.Constants.ALIST_PIC;
-import static cn.har01d.alist_tvbox.util.Constants.FILE;
-import static cn.har01d.alist_tvbox.util.Constants.FOLDER;
-import static cn.har01d.alist_tvbox.util.Constants.PLAYLIST;
-import static cn.har01d.alist_tvbox.util.Constants.USER_AGENT;
+import static cn.har01d.alist_tvbox.util.Constants.*;
 
 @Slf4j
 @Service
@@ -88,6 +59,7 @@ public class TvBoxService {
     private final AListAliasRepository aliasRepository;
     private final ShareRepository shareRepository;
     private final MetaRepository metaRepository;
+    private final PanAccountRepository panAccountRepository;
 
     private final AListService aListService;
     private final IndexService indexService;
@@ -148,7 +120,8 @@ public class TvBoxService {
                         SubscriptionService subscriptionService,
                         ConfigFileService configFileService,
                         ObjectMapper objectMapper,
-                        Environment environment) {
+                        Environment environment,
+                        PanAccountRepository panAccountRepository) {
         this.accountRepository = accountRepository;
         this.aliasRepository = aliasRepository;
         this.shareRepository = shareRepository;
@@ -163,6 +136,7 @@ public class TvBoxService {
         this.configFileService = configFileService;
         this.objectMapper = objectMapper;
         this.environment = environment;
+        this.panAccountRepository = panAccountRepository;
     }
 
     private Site getXiaoyaSite() {
@@ -174,11 +148,27 @@ public class TvBoxService {
         return null;
     }
 
+    private Site getXiaoyaOrFirstSite() {
+        List<Site> list = siteService.list();
+        Site result = null;
+        for (Site site : list) {
+            if (site.isSearchable() && !site.isDisabled()) {
+                if (site.isXiaoya()) {
+                    return site;
+                }
+                if (result == null) {
+                    result = site;
+                }
+            }
+        }
+        return result;
+    }
+
     public CategoryList getCategoryList(Integer type) {
         CategoryList result = new CategoryList();
 
         if (type == 0) {
-            Site site = getXiaoyaSite();
+            Site site = getXiaoyaOrFirstSite();
             if (site != null) {
                 setTypes(result, site);
             }
@@ -335,13 +325,13 @@ public class TvBoxService {
             result.getFilters().put(category.getType_id(), List.of(new Filter("sort", "排序", filters)));
         }
 
-        if (shareRepository.countByType(2) > 0) {
+        panAccountRepository.findByTypeAndMasterTrue(DriverType.QUARK).ifPresent(account -> {
             Category category = new Category();
-            category.setType_id("1$/\uD83C\uDF1E我的夸克网盘$1");
+            category.setType_id("1$" + getMountPath(account) + "$1");
             category.setType_name("夸克网盘");
             result.getCategories().add(category);
             result.getFilters().put(category.getType_id(), List.of(new Filter("sort", "排序", filters)));
-        }
+        });
 
         if (shareRepository.countByType(5) > 0) {
             Category category = new Category();
@@ -351,10 +341,34 @@ public class TvBoxService {
             result.getFilters().put(category.getType_id(), List.of(new Filter("sort", "排序", filters)));
         }
 
-        if (shareRepository.countByType(3) > 0) {
+        panAccountRepository.findByTypeAndMasterTrue(DriverType.UC).ifPresent(account -> {
             Category category = new Category();
-            category.setType_id("1$/115网盘$1");
+            category.setType_id("1$" + getMountPath(account) + "$1");
+            category.setType_name("UC网盘");
+            result.getCategories().add(category);
+            result.getFilters().put(category.getType_id(), List.of(new Filter("sort", "排序", filters)));
+        });
+
+        if (shareRepository.countByType(7) > 0) {
+            Category category = new Category();
+            category.setType_id("1$/我的UC分享$1");
+            category.setType_name("UC分享");
+            result.getCategories().add(category);
+            result.getFilters().put(category.getType_id(), List.of(new Filter("sort", "排序", filters)));
+        }
+
+        panAccountRepository.findByTypeAndMasterTrue(DriverType.PAN115).ifPresent(account -> {
+            Category category = new Category();
+            category.setType_id("1$" + getMountPath(account) + "$1");
             category.setType_name("115网盘");
+            result.getCategories().add(category);
+            result.getFilters().put(category.getType_id(), List.of(new Filter("sort", "排序", filters)));
+        });
+
+        if (shareRepository.countByType(8) > 0) {
+            Category category = new Category();
+            category.setType_id("1$/我的115分享$1");
+            category.setType_name("115分享");
             result.getCategories().add(category);
             result.getFilters().put(category.getType_id(), List.of(new Filter("sort", "排序", filters)));
         }
@@ -366,6 +380,20 @@ public class TvBoxService {
             result.getCategories().add(category);
             result.getFilters().put(category.getType_id(), List.of(new Filter("sort", "排序", filters)));
         }
+    }
+
+    private Object getMountPath(PanAccount account) {
+        if (account.getName().startsWith("/")) {
+            return account.getName();
+        }
+        if (account.getType() == DriverType.QUARK) {
+            return "/\uD83C\uDF1E我的夸克网盘";
+        } else if (account.getType() == DriverType.UC) {
+            return "/\uD83C\uDF1E我的UC网盘";
+        } else if (account.getType() == DriverType.PAN115) {
+            return "/115网盘";
+        }
+        return "/网盘";
     }
 
     public MovieList recommend(String ac, int pg) {
