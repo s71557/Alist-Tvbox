@@ -1,4 +1,4 @@
-FROM golang:1.20 as BUILDER
+FROM golang:1.20 as builder
 
 WORKDIR /app/
 
@@ -14,18 +14,20 @@ ENV MEM_OPT="-Xmx512M" ALIST_PORT=5344 INSTALL=new
 
 COPY config/config.json /opt/alist/data/config.json
 
-COPY --from=BUILDER /app/atv-cli /
+COPY --from=builder /app/atv-cli /
 
 COPY scripts/init.sh /
 COPY scripts/alist.sql /
 COPY scripts/downloadPg.sh /
-COPY movie.sh /
+COPY scripts/downloadZx.sh /
+COPY scripts/movie.sh /
 COPY scripts/entrypoint.sh /
 
 COPY data/tvbox.zip /
 COPY data/base_version /
 COPY data/cat.zip /
 COPY data/pg.zip /
+COPY data/zx.zip /
 COPY target/application/ ./
 
 COPY data/version data/app_version

@@ -18,6 +18,7 @@ AList代理，支持xiaoya版AList界面管理。
 - 多个AList站点
 - 多个阿里云盘账号
 - 挂载我的云盘
+- 支持夸克、UC、115网盘
 - 自动签到
 - 自动刷新阿里Token
 - 自定义TvBox配置
@@ -127,6 +128,7 @@ crontab -l | { cat; echo "0 2 * * * /opt/update_xiaoya.sh"; } | crontab -
 每天凌晨2点重启应用。
 
 ### 自动更新
+使用docker镜像watchtower实现自动更新。
 ```bash
 docker run -d \
     --name watchtower \
@@ -179,6 +181,13 @@ docker run -d \
 
 ![站点数据](https://raw.githubusercontent.com/power721/alist-tvbox/master/doc/atv_site_data.png)
 
+### Emby站点
+在Emby页面添加Emby站点url和帐号。
+
+在TvBox选择第五个站源观看。
+
+![Emby站源](https://raw.githubusercontent.com/power721/alist-tvbox/master/doc/atv_emby.jpg)
+
 ### 账号
 ![账号列表](https://raw.githubusercontent.com/power721/alist-tvbox/master/doc/atv_account.png)
 
@@ -188,6 +197,19 @@ docker run -d \
 修改主账号后需要重启AList服务。
 
 ![账号详情](https://raw.githubusercontent.com/power721/alist-tvbox/master/doc/atv_account_detail.png)
+
+#### 网盘帐号
+网盘帐号在帐号页面添加。
+
+夸克网盘Cookie获取方式： https://alist.nn.ci/zh/guide/drivers/quark.html
+
+UC网盘Cookie获取方式： https://alist.nn.ci/zh/guide/drivers/uc.html
+
+115网盘Cookie获取方式： https://alist.nn.ci/zh/guide/drivers/115.html
+
+网盘分享在资源页面添加。
+
+115网盘开启本地代理后才能使用webdav播放。
 
 ### 订阅
 tvbox/my.json和juhe.json不能在TvBox直接使用，请使用订阅地址！
@@ -252,6 +274,63 @@ tvbox/my.json和juhe.json不能在TvBox直接使用，请使用订阅地址！
 ```
 
 ![订阅预览](https://raw.githubusercontent.com/power721/alist-tvbox/master/doc/atv_sub_data.png)
+
+#### PG订阅
+在订阅页面，查看当前PG包版本和远程版本。
+
+如果本地版本与远程版本不同，点击同步文件按钮。
+
+自定义PG包，下载最新的PG包放在/etc/xiaoya/pg.zip，点击同步文件按钮。
+
+自定义PG配置，在文件页面新建文件/data/tokenm.json。
+填写自定义内容，比如：
+```json
+{
+  "pan115_delete_code" : "123456",
+  "tgsearch_api_session":"bot"
+}
+```
+
+自定义115分享资源：
+在/etc/xiaoya/pg/lib目录新建文件115share.txt。
+
+复制原文件内容，添加新的分享，点击同步文件按钮。
+
+其它分享类似，在压缩包/etc/xiaoya/pg.zip查看分享文件。
+
+#### 真心订阅
+在订阅页面，查看当前真心包版本和远程版本。
+
+如果本地版本与远程版本不同，点击同步文件按钮。
+
+自定义真心包，下载最新的真心包放在/etc/xiaoya/zx.zip，点击同步文件按钮。
+
+默认的TG搜索url是"http://IP:9999"
+
+自定义真心配置，在文件页面新建文件/data/zx.json。
+填写自定义内容，比如：
+```json
+{
+  "siteUrl": "http://192.168.0.2:9999",
+   "proxy" : "http://192.168.0.2:1072"
+}
+```
+
+订阅定制：
+```json
+{
+    "sites": [
+        {
+            "key": "TgYunPan|服务器",
+            "ext": {
+                "siteUrl": "http://192.168.0.2:9999",
+                "channelUsername": "kuakeyun,Quark_Movies,Quark_Share_Channel",
+                "commonConfig": "ATV_ADDRESS/zx/config?token=TOKEN"
+            }
+        }
+    ]
+}
+```
 
 #### 自定义多仓订阅
 在文件页面新建文件，目录：/www/tvbox/repo，名称：订阅id.json，比如：1.json。
