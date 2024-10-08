@@ -47,7 +47,7 @@ public class PgTokenController {
 
     @GetMapping("/version")
     public Object version() throws IOException {
-        String remote = restTemplate.getForObject("http://104.160.46.225/pg.version", String.class);
+        String remote = restTemplate.getForObject("http://har01d.org/pg.version", String.class);
         String local = "";
         Path path = Path.of("/data/pg_version.txt");
         if (Files.exists(path)) {
@@ -81,6 +81,9 @@ public class PgTokenController {
         Path path = Path.of("/data/tokenm.json");
         if (Files.exists(path)) {
             json = Files.readString(path);
+            String address = subscriptionService.readHostAddress();
+            json = json.replace("DOCKER_ADDRESS", address);
+            json = json.replace("ATV_ADDRESS", address);
             ObjectNode override = (ObjectNode) objectMapper.readTree(json);
             objectNode.setAll(override);
         }
