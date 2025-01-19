@@ -290,6 +290,10 @@ public class SubscriptionService {
             String quarkCookie = panAccountRepository.findByTypeAndMasterTrue(DriverType.QUARK).map(PanAccount::getCookie).orElse("");
             json = json.replace("QUARK_COOKIE", quarkCookie);
 
+            String address = readHostAddress();
+            json = json.replace("DOCKER_ADDRESS", address);
+            json = json.replace("ATV_ADDRESS", address);
+
             if ("index.config.js".equals(file)) {
                 return json;
             } else if ("index.config.js.md5".equals(file)) {
@@ -411,6 +415,9 @@ public class SubscriptionService {
         json = json.replace("阿里token", ali);
         String token = siteRepository.findById(1).map(Site::getToken).orElse("");
         json = json.replace("ALIST_TOKEN", token);
+        String address = readHostAddress();
+        json = json.replace("DOCKER_ADDRESS", address);
+        json = json.replace("ATV_ADDRESS", address);
         return json;
     }
 
@@ -961,6 +968,17 @@ public class SubscriptionService {
                 Map<String, Object> site = buildSite(token, "csp_Jellyfin", "Jellyfin");
                 sites.add(id++, site);
                 log.debug("add Jellyfin site: {}", site);
+            }
+        } catch (Exception e) {
+            log.warn("", e);
+        }
+
+        try {
+            boolean enabled = settingRepository.findById("enable_live").map(Setting::getValue).orElse("").equals("true");
+            if (enabled) {
+                Map<String, Object> site = buildSite(token, "csp_Live", "网络直播");
+                sites.add(id++, site);
+                log.debug("add Live site: {}", site);
             }
         } catch (Exception e) {
             log.warn("", e);
