@@ -582,9 +582,17 @@ public class SubscriptionService {
 //        }
 
         String json = loadConfigJson(configUrl);
-        if (json != null) {
-            String url = fixUrl(apiUrl) + "/";
-            json = json.replace("./", url);
+        URL api = fixUrl(apiUrl);
+        if (json != null && api != null) {
+            String url = resolveUrl(api, "../");
+            if (url != null) {
+                json = json.replace("../", url);
+            }
+
+            url = resolveUrl(api, "./");
+            if (url != null) {
+                json = json.replace("./", url);
+            }
         }
 
         Map<String, Object> config = convertResult(json, configKey);
@@ -968,12 +976,9 @@ public class SubscriptionService {
         }
 
         try {
-            boolean enabled = settingRepository.findById("enable_live").map(Setting::getValue).orElse("").equals("true");
-            if (enabled) {
-                Map<String, Object> site = buildSite(token, "csp_Live", "网络直播");
-                sites.add(id++, site);
-                log.debug("add Live site: {}", site);
-            }
+            Map<String, Object> site = buildSite(token, "csp_Live", "网络直播");
+            sites.add(id++, site);
+            log.debug("add Live site: {}", site);
         } catch (Exception e) {
             log.warn("", e);
         }
