@@ -15,11 +15,15 @@ import cn.har01d.alist_tvbox.util.Utils;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -31,19 +35,23 @@ public class PanAccountService {
     private final ShareRepository shareRepository;
     private final AccountService accountService;
     private final AListLocalService aListLocalService;
+    private final RestTemplate restTemplate;
+    private final Map<String, QuarkUCTV> drivers = new HashMap<>();
 
     public PanAccountService(PanAccountRepository panAccountRepository,
                              DriverAccountRepository driverAccountRepository,
                              SettingRepository settingRepository,
                              ShareRepository shareRepository,
                              AccountService accountService,
-                             AListLocalService aListLocalService) {
+                             AListLocalService aListLocalService,
+                             RestTemplateBuilder builder) {
         this.panAccountRepository = panAccountRepository;
         this.driverAccountRepository = driverAccountRepository;
         this.settingRepository = settingRepository;
         this.shareRepository = shareRepository;
         this.accountService = accountService;
         this.aListLocalService = aListLocalService;
+        this.restTemplate = builder.build();
     }
 
     @PostConstruct
@@ -54,6 +62,14 @@ public class PanAccountService {
         if (!settingRepository.existsByName("migrate_driver_account")) {
             migrateDriverAccounts();
         }
+
+        String deviceId = settingRepository.findById("quark_device_id").map(Setting::getValue).orElse(null);
+        if (deviceId == null) {
+            deviceId = QuarkUCTV.generateDeviceId();
+            settingRepository.save(new Setting("quark_device_id", deviceId));
+        }
+        drivers.put("QUARK_TV", new QuarkUCTV(restTemplate, new QuarkUCTV.Conf("https://open-api-drive.quark.cn", "d3194e61504e493eb6222857bccfed94", "kw2dvtd7p4t3pjl2d9ed9yc8yej8kw2d", "1.5.6", "CP", "http://api.extscreen.com/quarkdrive", deviceId)));
+        drivers.put("UC_TV", new QuarkUCTV(restTemplate, new QuarkUCTV.Conf("https://open-api-drive.uc.cn", "5acf882d27b74502b7040b0c65519aa7", "l3srvtd7p42l0d0x1u8d7yc8ye9kki4d", "1.6.5", "UCTVOFFICIALWEB", "http://api.extscreen.com/ucdrive", deviceId)));
     }
 
     private void migrateDriverAccounts() {
@@ -123,17 +139,26 @@ public class PanAccountService {
     }
 
     private void insertAList(DriverAccount account) {
+        String deviceId = settingRepository.findById("quark_device_id").map(Setting::getValue).orElse("");
         int id = account.getId() + IDX;
         if (account.getType() == DriverType.QUARK) {
             String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'Quark',30,'work','{\"cookie\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'native_proxy','');";
             int count = Utils.executeUpdate(String.format(sql, id, getMountPath(account), account.getCookie(), account.getFolder()));
             log.info("insert Quark account {} : {}, result: {}", id, getMountPath(account), count);
             Utils.executeUpdate("INSERT INTO x_setting_items VALUES('quark_cookie','" + account.getCookie() + "','','text','',1,0);");
+        } else if (account.getType() == DriverType.QUARK_TV) {
+            String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'QuarkTV',30,'work','{\"refresh_token\":\"%s\",\"device_id\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','');";
+            int count = Utils.executeUpdate(String.format(sql, id, getMountPath(account), account.getToken(), deviceId, account.getFolder()));
+            log.info("insert QuarkTV account {} : {}, result: {}", id, getMountPath(account), count);
         } else if (account.getType() == DriverType.UC) {
             String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'UC',30,'work','{\"cookie\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'native_proxy','');";
             int count = Utils.executeUpdate(String.format(sql, id, getMountPath(account), account.getCookie(), account.getFolder()));
             log.info("insert UC account {} : {}, result: {}", id, getMountPath(account), count);
             Utils.executeUpdate("INSERT INTO x_setting_items VALUES('uc_cookie','" + account.getCookie() + "','','text','',1,0);");
+        } else if (account.getType() == DriverType.UC_TV) {
+            String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'UCTV',30,'work','{\"refresh_token\":\"%s\",\"device_id\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','');";
+            int count = Utils.executeUpdate(String.format(sql, id, getMountPath(account), account.getToken(), deviceId, account.getFolder()));
+            log.info("insert UCTV account {} : {}, result: {}", id, getMountPath(account), count);
         } else if (account.getType() == DriverType.THUNDER) {
             String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'ThunderBrowser',30,'work','{\"username\":\"%s\",\"password\":\"%s\",\"safe_password\":\"%s\",\"root_folder_id\":\"%s\",\"remove_way\":\"delete\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','');";
             int count = Utils.executeUpdate(String.format(sql, id, getMountPath(account), account.getUsername(), account.getPassword(), account.getSafePassword(), account.getFolder()));
@@ -142,6 +167,10 @@ public class PanAccountService {
             String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'189CloudPC',30,'work','{\"username\":\"%s\",\"password\":\"%s\",\"validate_code\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','');";
             int count = Utils.executeUpdate(String.format(sql, id, getMountPath(account), account.getUsername(), account.getPassword(), account.getToken(), account.getFolder()));
             log.info("insert 189CloudPC account {} : {}, result: {}", id, getMountPath(account), count);
+        } else if (account.getType() == DriverType.PAN123) {
+            String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'123Pan',30,'work','{\"username\":\"%s\",\"password\":\"%s\",\"root_folder_id\":\"%s\",\"platformType\":\"android\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','');";
+            int count = Utils.executeUpdate(String.format(sql, id, getMountPath(account), account.getUsername(), account.getPassword(), account.getFolder()));
+            log.info("insert 123Pan account {} : {}, result: {}", id, getMountPath(account), count);
         } else if (account.getType() == DriverType.PAN139) {
             String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'139Yun',30,'work','{\"authorization\":\"%s\",\"root_folder_id\":\"%s\",\"type\":\"personal_new\",\"cloud_id\":\"\",\"custom_upload_part_size\":0}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','');";
             int count = Utils.executeUpdate(String.format(sql, id, getMountPath(account), account.getToken(), account.getFolder()));
@@ -166,11 +195,21 @@ public class PanAccountService {
             int count = Utils.executeUpdate(String.format(sql, id, getMountPath(account), account.getCookie(), account.getFolder()));
             log.info("insert Quark account {} : {}, result: {}", id, getMountPath(account), count);
             Utils.executeUpdate("INSERT INTO x_setting_items VALUES('quark_cookie','" + account.getCookie() + "','','text','',1,0);");
+        } else if (account.getType() == DriverType.QUARK_TV) {
+            String deviceId = settingRepository.findById("quark_device_id").map(Setting::getValue).orElse("");
+            String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'QuarkTV',30,'work','{\"refresh_token\":\"%s\",\"device_id\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','',0);";
+            int count = Utils.executeUpdate(String.format(sql, id, getMountPath(account), account.getToken(), deviceId, account.getFolder()));
+            log.info("insert QuarkTV account {} : {}, result: {}", id, getMountPath(account), count);
         } else if (account.getType() == DriverType.UC) {
             String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'UC',30,'work','{\"cookie\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'native_proxy','',0);";
             int count = Utils.executeUpdate(String.format(sql, id, getMountPath(account), account.getCookie(), account.getFolder()));
             log.info("insert UC account {} : {}, result: {}", id, getMountPath(account), count);
             Utils.executeUpdate("INSERT INTO x_setting_items VALUES('uc_cookie','" + account.getCookie() + "','','text','',1,0);");
+        } else if (account.getType() == DriverType.UC_TV) {
+            String deviceId = settingRepository.findById("quark_device_id").map(Setting::getValue).orElse("");
+            String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'UCTV',30,'work','{\"refresh_token\":\"%s\",\"device_id\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','',0);";
+            int count = Utils.executeUpdate(String.format(sql, id, getMountPath(account), account.getToken(), deviceId, account.getFolder()));
+            log.info("insert UCTV account {} : {}, result: {}", id, getMountPath(account), count);
         } else if (account.getType() == DriverType.THUNDER) {
             String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'ThunderBrowser',30,'work','{\"username\":\"%s\",\"password\":\"%s\",\"safe_password\":\"%s\",\"root_folder_id\":\"%s\",\"remove_way\":\"delete\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
             int count = Utils.executeUpdate(String.format(sql, id, getMountPath(account), account.getUsername(), account.getPassword(), account.getSafePassword(), account.getFolder()));
@@ -179,6 +218,10 @@ public class PanAccountService {
             String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'189CloudPC',30,'work','{\"username\":\"%s\",\"password\":\"%s\",\"validate_code\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
             int count = Utils.executeUpdate(String.format(sql, id, getMountPath(account), account.getUsername(), account.getPassword(), account.getToken(), account.getFolder()));
             log.info("insert 189CloudPC account {} : {}, result: {}", id, getMountPath(account), count);
+        } else if (account.getType() == DriverType.PAN123) {
+            String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'123Pan',30,'work','{\"username\":\"%s\",\"password\":\"%s\",\"root_folder_id\":\"%s\",\"platformType\":\"android\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
+            int count = Utils.executeUpdate(String.format(sql, id, getMountPath(account), account.getUsername(), account.getPassword(), account.getFolder()));
+            log.info("insert 123Pan account {} : {}, result: {}", id, getMountPath(account), count);
         } else if (account.getType() == DriverType.PAN139) {
             String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'139Yun',30,'work','{\"authorization\":\"%s\",\"root_folder_id\":\"%s\",\"type\":\"personal_new\",\"cloud_id\":\"\",\"custom_upload_part_size\":0}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
             int count = Utils.executeUpdate(String.format(sql, id, getMountPath(account), account.getToken(), account.getFolder()));
@@ -196,7 +239,7 @@ public class PanAccountService {
         }
     }
 
-    private Object getMountPath(DriverAccount account) {
+    private String getMountPath(DriverAccount account) {
         if (account.getName().startsWith("/")) {
             return account.getName();
         }
@@ -204,6 +247,10 @@ public class PanAccountService {
             return "/\uD83C\uDF1E我的夸克网盘/" + account.getName();
         } else if (account.getType() == DriverType.UC) {
             return "/\uD83C\uDF1E我的UC网盘/" + account.getName();
+        } else if (account.getType() == DriverType.QUARK_TV) {
+            return "/我的夸克网盘/" + account.getName();
+        } else if (account.getType() == DriverType.UC_TV) {
+            return "/我的UC网盘/" + account.getName();
         } else if (account.getType() == DriverType.PAN115) {
             return "/115网盘/" + account.getName();
         } else if (account.getType() == DriverType.THUNDER) {
@@ -212,6 +259,8 @@ public class PanAccountService {
             return "/我的天翼云盘/" + account.getName();
         } else if (account.getType() == DriverType.PAN139) {
             return "/我的移动云盘/" + account.getName();
+        } else if (account.getType() == DriverType.PAN123) {
+            return "/我的123网盘/" + account.getName();
         }
         return "/网盘" + account.getName();
         // cn.har01d.alist_tvbox.service.TvBoxService.addMyFavorite
@@ -291,7 +340,7 @@ public class PanAccountService {
     public void delete(Integer id) {
         DriverAccount account = driverAccountRepository.findById(id).orElse(null);
         if (account != null) {
-            if (account.isMaster()) {
+            if (account.isMaster() && account.getType() != DriverType.UC_TV && account.getType() != DriverType.QUARK_TV) {
                 throw new BadRequestException("不能删除主账号");
             }
             driverAccountRepository.deleteById(id);
@@ -310,7 +359,7 @@ public class PanAccountService {
         if (dto.getType() == null) {
             throw new BadRequestException("类型不能为空");
         }
-        if (dto.getType() == DriverType.THUNDER || dto.getType() == DriverType.CLOUD189) {
+        if (dto.getType() == DriverType.THUNDER || dto.getType() == DriverType.CLOUD189 || dto.getType() == DriverType.PAN123) {
             if (StringUtils.isBlank(dto.getUsername())) {
                 throw new BadRequestException("用户名不能为空");
             }
@@ -325,11 +374,14 @@ public class PanAccountService {
             throw new BadRequestException("Cookie和Token不能同时为空");
         }
         if (StringUtils.isBlank(dto.getFolder())) {
-            if (dto.getType() == DriverType.QUARK || dto.getType() == DriverType.PAN115) {
+            if (dto.getType() == DriverType.QUARK || dto.getType() == DriverType.UC || dto.getType() == DriverType.QUARK_TV || dto.getType() == DriverType.UC_TV || dto.getType() == DriverType.PAN115 || dto.getType() == DriverType.PAN123) {
                 dto.setFolder("0");
             } else if (dto.getType() == DriverType.CLOUD189) {
                 dto.setFolder("-11");
             }
+        }
+        if (dto.getCookie() != null) {
+            dto.setCookie(dto.getCookie().trim());
         }
     }
 
@@ -371,6 +423,23 @@ public class PanAccountService {
         } catch (Exception e) {
             throw new BadRequestException(e);
         }
+    }
+
+    public QuarkUCTV.LoginResponse getQrCode(String type) {
+        QuarkUCTV driver = drivers.get(type);
+        if (driver == null) {
+            throw new BadRequestException("不支持的类型");
+        }
+        return driver.getLoginCode();
+    }
+
+    public String getRefreshToken(String type, String queryToken) {
+        QuarkUCTV driver = drivers.get(type);
+        if (driver == null) {
+            throw new BadRequestException("不支持的类型");
+        }
+        String code = driver.getCode(queryToken);
+        return driver.getRefreshToken(code);
     }
 
     @Scheduled(initialDelay = 1800_000, fixedDelay = 1800_000)
