@@ -72,6 +72,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -1521,10 +1522,15 @@ public class TvBoxService {
             } else {
                 movieDetail.setVod_play_url(fsDetail.getName() + "$" + buildPlayUrl(site, path));
             }
+            String parent = getParent(path);
             if (!"web".equals(ac)) {
-                movieDetail.setVod_content(getParent(path));
+                movieDetail.setVod_content(parent);
             }
-            setMovieInfo(site, movieDetail, fsDetail.getName(), getParent(path), true);
+            if (!setMovieInfo(site, movieDetail, fsDetail.getName(), parent, true)) {
+                movieDetail.setVod_name(getNameFromPath(parent));
+                setMovieInfo(site, movieDetail, "", parent, true);
+                movieDetail.setVod_name(fsDetail.getName());
+            }
             if ("PikPakShare".equals(fsDetail.getProvider())) {
                 movieDetail.setVod_remarks("P" + movieDetail.getVod_remarks());
             }
@@ -1537,6 +1543,7 @@ public class TvBoxService {
     }
 
     private String getMovieName(String filename, String path) {
+        filename = filename.replace("@", "");
         if (filename.startsWith("4K") || filename.equalsIgnoreCase("1080P")
                 || NUMBER.matcher(filename).matches() || NUMBER1.matcher(filename).matches()
                 || NUMBER2.matcher(filename).matches() || NUMBER3.matcher(filename).matches()) {
@@ -1592,7 +1599,7 @@ public class TvBoxService {
 
         MovieDetail movieDetail = new MovieDetail();
         movieDetail.setVod_id(site.getId() + "$" + encodeUrl(path) + "$1");
-        movieDetail.setVod_name(getMovieName(fsDetail.getName(), newPath));
+        movieDetail.setVod_name(fsDetail.getName());
         movieDetail.setVod_time(fsDetail.getModified());
         movieDetail.setVod_play_from(site.getName());
         if (!"web".equals(ac)) {
@@ -1814,9 +1821,9 @@ public class TvBoxService {
         return text;
     }
 
-    private void setMovieInfo(Site site, MovieDetail movieDetail, String name, String path, boolean details) {
+    private boolean setMovieInfo(Site site, MovieDetail movieDetail, String filename, String path, boolean details) {
         if (setTmdbInfo(site, movieDetail, path, details)) {
-            return;
+            return true;
         }
 
         try {
@@ -1828,24 +1835,52 @@ public class TvBoxService {
                 }
             }
 
+            String name = movieDetail.getVod_name();
+
             if (movie == null) {
-                movie = doubanService.getByName(movieDetail.getVod_name());
+                if (name.startsWith("Season ")) {
+                    Matcher m = NUMBER.matcher(name);
+                    if (m.matches()) {
+                        String text = m.group(1);
+                        String newNum = TextUtils.number2text(text);
+                        String newName = getNameFromPath(getParent(path));
+                        name = TextUtils.fixName(newName) + " 第" + newNum + "季";
+                    }
+                }
+
+                movie = doubanService.getByName(name);
+            }
+
+            if (movie == null) {
+                String newName = name.replace("@", "").replace("！", "");
+                if (!newName.equals(name)) {
+                    movie = doubanService.getByName(newName);
+                }
+            }
+
+            if (movie == null && !name.contains("第一季")) {
+                movie = doubanService.getByName(name + " 第一季");
             }
 
             if (movie == null) {
                 for (var pattern : List.of(NUMBER, NUMBER1, NUMBER2, NUMBER3)) {
-                    var m = pattern.matcher(name);
+                    var m = pattern.matcher(filename);
                     if (m.matches()) {
-                        movie = doubanService.getByName(getNameFromPath(getParent(path)));
-                        break;
+                        String newName = getNameFromPath(getParent(path));
+                        if (!newName.equals(name)) {
+                            movie = doubanService.getByName(newName);
+                            break;
+                        }
                     }
                 }
             }
 
             setMovieInfo(movieDetail, movie, null, details);
+            return movie != null;
         } catch (Exception e) {
             log.warn("", e);
         }
+        return false;
     }
 
     private void setMovieInfo(MovieDetail movieDetail, Meta meta, boolean details) {
