@@ -14,6 +14,7 @@ import cn.har01d.alist_tvbox.entity.Meta;
 import cn.har01d.alist_tvbox.entity.MetaRepository;
 import cn.har01d.alist_tvbox.entity.Movie;
 import cn.har01d.alist_tvbox.entity.PikPakAccountRepository;
+import cn.har01d.alist_tvbox.entity.Share;
 import cn.har01d.alist_tvbox.entity.ShareRepository;
 import cn.har01d.alist_tvbox.entity.Site;
 import cn.har01d.alist_tvbox.entity.Tmdb;
@@ -59,6 +60,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -1450,6 +1452,7 @@ public class TvBoxService {
         Site site = getSite(tid);
         String[] parts = tid.split("\\$");
         String path = parts[1];
+        updateShareTime(path);
         if (path.contains(PLAYLIST)) {
             return getPlaylist(ac, site, path);
         }
@@ -1542,6 +1545,19 @@ public class TvBoxService {
         return result;
     }
 
+    private void updateShareTime(String path) {
+        String[] parts = path.split("/");
+        if (parts.length > 3 && parts[2].equals("temp")) {
+            path = "/" + parts[1] + "/" + parts[2] + "/" + parts[3];
+            Share share = shareRepository.findByPath(path);
+            if (share != null && share.isTemp()) {
+                share.setTime(Instant.now());
+                log.debug("update share time: {} {}", share.getId(), path);
+                shareRepository.save(share);
+            }
+        }
+    }
+
     private String getMovieName(String filename, String path) {
         filename = filename.replace("@", "");
         if (filename.startsWith("4K") || filename.equalsIgnoreCase("1080P")
@@ -1571,19 +1587,28 @@ public class TvBoxService {
         return files;
     }
 
-    public String m3u8(String path) {
+    public String m3u8(String tid) {
+        String[] parts = tid.split("\\$");
+        String path = parts[0];
+        int start = 0;
+        if (parts.length > 1) {
+            start = Integer.parseInt(parts[1]);
+        }
         Site site = siteService.getById(1);
         List<String> list = new ArrayList<>();
         list.add("#EXTM3U");
         MovieList movieList = getPlaylist("detail", site, path + PLAYLIST);
         MovieDetail detail = movieList.getList().get(0);
         String[] folders = detail.getVod_play_from().split("\\$\\$\\$");
+        int i = 0;
         for (String folder : folders) {
             String[] urls = detail.getVod_play_url().split("#");
             for (String url : urls) {
-                String[] parts = url.split("\\$");
-                list.add("#EXTINF:-1," + detail.getVod_name() + " " + (folders.length > 1 ? folder + " " : "") + parts[0]);
-                list.add(parts[1]);
+                if (i++ >= start) {
+                    parts = url.split("\\$");
+                    list.add("#EXTINF:3600000," + detail.getVod_name() + " " + (folders.length > 1 ? folder + " " : "") + parts[0]);
+                    list.add(parts[1]);
+                }
             }
         }
         return String.join("\n", list);
@@ -1858,6 +1883,13 @@ public class TvBoxService {
                 }
             }
 
+            if (movie == null) {
+                int index = name.indexOf(' ');
+                if (index > 0) {
+                    movie = doubanService.getByName(name.substring(0, index));
+                }
+            }
+
             if (movie == null && !name.contains("第一季")) {
                 movie = doubanService.getByName(name + " 第一季");
             }
@@ -1902,6 +1934,9 @@ public class TvBoxService {
         movieDetail.setDbid(movie.getId());
         if (!details) {
             return;
+        }
+        if (movieDetail.getVod_id().endsWith("playlist$1")) {
+            movieDetail.setVod_name(movie.getName());
         }
         movieDetail.setVod_actor(movie.getActors());
         movieDetail.setVod_director(movie.getDirectors());

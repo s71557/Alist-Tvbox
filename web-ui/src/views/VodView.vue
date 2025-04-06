@@ -2,7 +2,7 @@
   <div class="vod">
 
     <el-row justify="space-between">
-      <el-col :span="20">
+      <el-col :span="18">
         <el-breadcrumb separator="/">
           <el-breadcrumb-item v-for="item in paths">
             <a @click="loadFolder(item.path)">{{ item.text }}</a>
@@ -11,16 +11,49 @@
       </el-col>
 
       <el-col :span="2">
-        <el-button :icon="Film" circle @click="loadHistory"></el-button>
+        <el-input v-model="keyword" @keyup.enter="search" :disabled="searching" placeholder="搜索电报资源">
+          <template #append>
+            <el-button :icon="Search" :disabled="searching" @click="search"/>
+          </template>
+        </el-input>
+      </el-col>
+
+      <el-col :span="2">
+        <el-button :icon="Film" circle @click="loadHistory"/>
         <el-button :icon="Delete" circle @click="clearHistory"
-                   v-if="paths.length>1&&paths[1].path=='/~history'"></el-button>
-        <el-button :icon="Plus" circle @click="handleAdd"></el-button>
+                   v-if="paths.length>1&&paths[1].path=='/~history'"/>
+        <el-button :icon="Setting" circle @click="settingVisible=true"/>
+        <el-button :icon="Plus" circle @click="handleAdd"/>
       </el-col>
     </el-row>
 
     <div class="divider"></div>
 
     <el-row justify="center">
+      <el-col :xs="3" :sm="3" :md="5" :span="9" v-if="results.length">
+        {{ filteredResults.length }}/{{ results.length }}条搜索结果&nbsp;&nbsp;
+        <el-select style="width: 90px" v-model="shareType" @change="filterSearchResults">
+          <el-option
+            v-for="item in options"
+            :key="item.value"
+            :label="item.label"
+            :value="item.value"
+          />
+        </el-select>
+        &nbsp;&nbsp;
+        <el-button :icon="Delete" circle @click="clearSearch"></el-button>
+        <el-table :data="filteredResults" v-loading="searching" class="results" @row-click="loadResult">
+          <el-table-column prop="vod_name" label="内容">
+            <template #default="scope">
+              <el-tooltip :content="scope.row.vod_play_url">
+                {{ getShareType(scope.row.type_name) }}
+                {{ scope.row.vod_name }}
+              </el-tooltip>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-col>
+
       <el-col :xs="22" :sm="20" :md="18" :span="14">
         <el-table v-loading="loading" :data="files" style="width: 100%" @row-click="load">
           <el-table-column prop="vod_name" label="名称">
@@ -85,7 +118,8 @@
           <el-col :span="5">
             <div v-if="playlist.length>1">
               <div style="margin-left: 30px; margin-bottom: 10px;">
-                第{{ currentVideoIndex + 1 }}集 / 总共{{ playlist.length }}集
+                <el-link :href="buildVlcUrl(currentVideoIndex)" target="_blank">第{{ currentVideoIndex + 1 }}集</el-link> /
+                <el-link :href="buildVlcUrl(0)" target="_blank">总共{{ playlist.length }}集</el-link>
               </div>
               <el-scrollbar ref="scrollbarRef" height="1050px">
                 <ul>
@@ -174,7 +208,7 @@
                   </template>
                   <template #default>
                     播放速度
-                    <el-slider v-model="currentSpeed" @change="setSpeed" :min="0.25" :max="2" :step="0.25" show-stops/>
+                    <el-slider v-model="currentSpeed" @change="setSpeed" :min="0.5" :max="2" :step="0.1" show-stops/>
                   </template>
                 </el-popover>
                 <el-popover placement="bottom" width="300px">
@@ -196,6 +230,9 @@
                       <div>全屏： 回车键</div>
                       <div>退出： Esc</div>
                       <div>静音： m</div>
+                      <div>减速： -</div>
+                      <div>加速： +</div>
+                      <div>普速： =</div>
                       <div>后退15秒： ←</div>
                       <div>前进15秒： →</div>
                       <div v-if="playlist.length>1">上集： ↑</div>
@@ -255,6 +292,36 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="settingVisible" title="搜索配置">
+      <el-form label-width="140">
+        <el-form-item label="电报频道群组">
+          <el-input v-model="tgChannels" :rows="3" type="textarea" placeholder="逗号分割，留空使用默认值"/>
+          <span>登陆后使用此频道列表搜索。</span>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="updateTgChannels">更新</el-button>
+        </el-form-item>
+        <el-form-item label="电报频道列表">
+          <el-input v-model="tgWebChannels" :rows="3" type="textarea" placeholder="逗号分割，留空使用默认值"/>
+          <span>未登陆使用此频道列表搜索。</span>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="updateTgWebChannels">更新</el-button>
+        </el-form-item>
+        <el-form-item label="搜索超时时间">
+          <el-input-number v-model="tgTimeout" :min="500" :max="30000"/>&nbsp;毫秒
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="updateTgTimeout">更新</el-button>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+      <span class="dialog-footer">
+        <el-button @click="settingVisible=false">取消</el-button>
+      </span>
+      </template>
+    </el-dialog>
+
   </div>
 </template>
 
@@ -267,7 +334,7 @@ import type {VodItem} from "@/model/VodItem";
 import {useRoute, useRouter} from "vue-router";
 import clipBorad from "vue-clipboard3";
 import {onUnmounted} from "@vue/runtime-core";
-import {Delete, Film, Plus, QuestionFilled} from "@element-plus/icons-vue";
+import {Delete, Film, Plus, QuestionFilled, Search, Setting} from "@element-plus/icons-vue";
 
 let {toClipboard} = clipBorad();
 
@@ -282,6 +349,11 @@ const router = useRouter()
 const videoPlayer = ref(null)
 const scrollbarRef = ref<ScrollbarInstance>()
 const token = ref('')
+const keyword = ref('')
+const tgChannels = ref('')
+const tgWebChannels = ref('')
+const tgTimeout = ref(3000)
+const shareType = ref('')
 const title = ref('')
 const playUrl = ref('')
 const movies = ref<VodItem[]>([])
@@ -304,17 +376,32 @@ const isMuted = ref(false)
 const isFullscreen = ref(false)
 const dialogVisible = ref(false)
 const formVisible = ref(false)
+const settingVisible = ref(false)
 const isHistory = ref(false)
+const searching = ref(false)
 const page = ref(1)
 const size = ref(40)
 const total = ref(0)
 const files = ref<VodItem[]>([])
+const results = ref<VodItem[]>([])
+const filteredResults = ref<VodItem[]>([])
 const paths = ref<Item[]>([])
 const form = ref({
   link: '',
   path: '',
   code: '',
 })
+const options = [
+  {label: '全部', value: ''},
+  {label: '夸克', value: '5'},
+  {label: '阿里', value: '0'},
+  {label: '123', value: '3'},
+  {label: '天翼', value: '9'},
+  {label: '迅雷', value: '2'},
+  {label: 'UC', value: '7'},
+  {label: '115', value: '8'},
+  {label: 'PikPak', value: '1'},
+]
 
 const handleAdd = () => {
   form.value = {
@@ -325,6 +412,88 @@ const handleAdd = () => {
   formVisible.value = true
 }
 
+const search = () => {
+  searching.value = true
+  axios.get('/api/telegram/search?wd=' + keyword.value).then(({data}) => {
+    searching.value = false
+    results.value = data.map(e => {
+      return {
+        vod_id: e.id + '',
+        vod_name: e.name,
+        vod_tag: 'folder',
+        vod_time: formatDate(e.time),
+        type_name: e.type,
+        vod_play_from: e.channel,
+        vod_play_url: e.link,
+      }
+    })
+    if (results.value.length == 0) {
+      ElMessage.info('无搜索结果')
+    }
+    filterSearchResults()
+  }, () => {
+    searching.value = false
+  })
+}
+
+const filterSearchResults = () => {
+  filteredResults.value = shareType.value ? results.value.filter(e => e.type_name == shareType.value) : results.value
+}
+
+const getShareType = (type: string) => {
+  if (type == '0') {
+    return '📀'
+  }
+  if (type == '5') {
+    return '🚀'
+  }
+  if (type == '7') {
+    return '🌞'
+  }
+  if (type == '3') {
+    return '💾'
+  }
+  if (type == '8') {
+    return '📡'
+  }
+  if (type == '9') {
+    return '☁'
+  }
+  if (type == '1') {
+    return '🅿'
+  }
+  if (type == '2') {
+    return '⚡'
+  }
+  return ''
+}
+
+const clearSearch = () => {
+  keyword.value = ''
+  results.value = []
+  filteredResults.value = []
+}
+
+const updateTgChannels = () => {
+  axios.post('/api/settings', {name: 'tg_channels', value: tgChannels.value}).then(({data}) => {
+    tgChannels.value = data.value
+    ElMessage.success('更新成功')
+  })
+}
+
+const updateTgWebChannels = () => {
+  axios.post('/api/settings', {name: 'tg_web_channels', value: tgWebChannels.value}).then(({data}) => {
+    tgWebChannels.value = data.value
+    ElMessage.success('更新成功')
+  })
+}
+
+const updateTgTimeout = () => {
+  axios.post('/api/settings', {name: 'tg_timeout', value: tgTimeout.value + ''}).then(() => {
+    ElMessage.success('更新成功')
+  })
+}
+
 const focus = () => {
   document.getElementById('link').focus()
 }
@@ -333,6 +502,17 @@ const addShare = () => {
   axios.post('/api/share-link', form.value).then(({data}) => {
     loadFolder(data)
     formVisible.value = false
+  })
+}
+
+const loadResult = (row: any) => {
+  form.value = {
+    link: row.vod_play_url,
+    path: '',
+    code: '',
+  }
+  axios.post('/api/share-link', form.value).then(({data}) => {
+    loadFolder(data)
   })
 }
 
@@ -465,25 +645,31 @@ const handleKeyDown = (event: KeyboardEvent) => {
     return;
   }
   if (!dialogVisible.value) {
-    if (event.code === 'Space' && files.value.length > 0 && files.value[0].vod_tag === 'file') {
-      event.preventDefault()
-      loadDetail(files.value[0].vod_id)
-    } else if (event.code === 'Escape' && paths.value.length > 1) {
-      event.preventDefault()
-      loadFolder(paths.value[paths.value.length - 2].path)
-    } else if (event.code === 'KeyA') {
-      if (event.ctrlKey || event.metaKey) {
-        return;
-      }
-      event.preventDefault()
-      handleAdd()
-    } else if (event.code === 'KeyH') {
-      if (event.ctrlKey || event.metaKey) {
-        return;
-      }
-      event.preventDefault()
-      loadHistory()
-    }
+    // if (event.code === 'Space' && files.value.length > 0 && files.value[0].vod_tag === 'file') {
+    //   event.preventDefault()
+    //   loadDetail(files.value[0].vod_id)
+    // } else if (event.code === 'Escape' && paths.value.length > 1) {
+    //   event.preventDefault()
+    //   loadFolder(paths.value[paths.value.length - 2].path)
+    // } else if (event.code === 'KeyA') {
+    //   if (event.ctrlKey || event.metaKey) {
+    //     return;
+    //   }
+    //   event.preventDefault()
+    //   handleAdd()
+    // } else if (event.code === 'KeyH') {
+    //   if (event.ctrlKey || event.metaKey) {
+    //     return;
+    //   }
+    //   event.preventDefault()
+    //   loadHistory()
+    // } else if (event.code === 'KeyS') {
+    //   if (event.ctrlKey || event.metaKey) {
+    //     return;
+    //   }
+    //   event.preventDefault()
+    //   search()
+    // }
     return
   }
   if (event.code === 'Space') {
@@ -504,6 +690,15 @@ const handleKeyDown = (event: KeyboardEvent) => {
   } else if (event.code === 'Enter') {
     event.preventDefault()
     toggleFullscreen()
+  } else if (event.key === '+') {
+    event.preventDefault()
+    incSpeed()
+  } else if (event.key === '-') {
+    event.preventDefault()
+    decSpeed()
+  } else if (event.key === '=') {
+    event.preventDefault()
+    setSpeed(1.0)
   } else if (event.code === 'KeyM') {
     if (event.ctrlKey || event.metaKey) {
       return;
@@ -733,6 +928,22 @@ const setSpeed = (speed: number) => {
   }
 }
 
+const incSpeed = () => {
+  let speed = parseFloat((currentSpeed.value + 0.1).toFixed(1))
+  if (speed > 2.0) {
+    speed = 2.0
+  }
+  setSpeed(speed)
+}
+
+const decSpeed = () => {
+  let speed = parseFloat((currentSpeed.value - 0.1).toFixed(1))
+  if (speed < 0.5) {
+    speed = 0.5
+  }
+  setSpeed(speed)
+}
+
 const handleSpeedChange = () => {
   if (videoPlayer.value) {
     currentSpeed.value = videoPlayer.value.playbackRate
@@ -765,16 +976,16 @@ const copyPlayUrl = () => {
   })
 }
 
-const buildVlcUrl = () => {
+const buildVlcUrl = (start: number) => {
   const id = movies.value[0].vod_id
-  let url = playUrl.value + '#1'
+  let url = playUrl.value
   if (id.endsWith('playlist$1')) {
     const path = getPath(id)
     const index = path.lastIndexOf('/')
     const parent = path.substring(0, index)
-    url = window.location.origin + '/m3u8' + token.value + '?path=' + parent + '#' + (currentVideoIndex.value + 1)
+    url = window.location.origin + '/m3u8' + token.value + '?path=' + parent + '$' + start
   }
-  return url
+  return `vlc://${url}`
 }
 
 const openInVLC = () => {
@@ -946,6 +1157,11 @@ onMounted(async () => {
       loadFiles('/')
     }
   })
+  axios.get('/api/settings').then(({data}) => {
+    tgChannels.value = data.tg_channels
+    tgWebChannels.value = data.tg_web_channels
+    tgTimeout.value = +data.tg_timeout
+  })
   currentVolume.value = parseInt(localStorage.getItem('volume') || '100')
   timer = setInterval(save, 5000)
   window.addEventListener('keydown', handleKeyDown);
@@ -967,5 +1183,11 @@ video {
 
 .divider {
   margin: 15px 0;
+}
+
+.results {
+  width: 100%;
+  max-height: 1080px;
+  overflow: auto;
 }
 </style>
