@@ -986,6 +986,14 @@ public class SubscriptionService {
         } catch (Exception e) {
             log.warn("", e);
         }
+
+        try {
+            Map<String, Object> site = buildSite(token, "csp_TgSearch", "电报搜索");
+            sites.add(id++, site);
+            log.debug("add TG search: {}", site);
+        } catch (Exception e) {
+            log.warn("", e);
+        }
     }
 
     private Map<String, Object> buildSite(String token, String key, String name) throws IOException {

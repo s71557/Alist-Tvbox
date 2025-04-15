@@ -1,11 +1,11 @@
 package cn.har01d.alist_tvbox.dto.tg;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
 
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -17,6 +17,7 @@ public class Message {
     private static final Pattern LINK = Pattern.compile("(https?:\\/\\/\\S+)");
     private int id;
     private Instant time;
+    @JsonIgnore
     private String content;
     private String channel;
     private String name;
@@ -66,6 +67,16 @@ public class Message {
         this.channel = channel;
     }
 
+    public Message(SearchResult message, String link) {
+        this.id = message.getId();
+        this.time = Instant.ofEpochSecond(message.getTime());
+        this.content = message.getContent();
+        this.link = link;
+        this.type = parseType(link);
+        this.name = parseName();
+        this.channel = message.getChannel();
+    }
+
     public String toPgString() {
         return time.atZone(ZoneId.of("UTC")).format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")) + "\t" + channel + "\t" + content.replace('\n', ' ') + "\t" + id;
     }
@@ -78,6 +89,9 @@ public class Message {
         String[] lines = content.split("\n");
         String line = lines[0];
         if (line.startsWith("#") && lines.length > 1) {
+            line = lines[1];
+        }
+        if (line.startsWith("https://") && lines.length > 1) {
             line = lines[1];
         }
         String name = line.replace("名称：", "").replace("名称:", "").replace("资源标题：", "");
@@ -95,7 +109,7 @@ public class Message {
     private String parseLink() {
         Matcher m = LINK.matcher(content);
         while (m.find()) {
-            String link = m.group(1);
+            String link = fixLink(m.group(1));
             type = parseType(link);
             if (type != null) {
                 return link;
@@ -108,7 +122,7 @@ public class Message {
         List<String> links = new ArrayList<>();
         Matcher m = LINK.matcher(content);
         while (m.find()) {
-            String link = m.group(1);
+            String link = fixLink(m.group(1));
             String type = parseType(link);
             if (type != null) {
                 links.add(link);
@@ -117,7 +131,14 @@ public class Message {
         return links;
     }
 
-    public static String parseType(String link) {
+    private static String fixLink(String link) {
+        if (link.endsWith("**")) {
+            return link.substring(0, link.length() - 2);
+        }
+        return link;
+    }
+
+    private static String parseType(String link) {
         if (link.contains("alipan.com") || link.contains("aliyundrive.com")) {
             return "0";
         }

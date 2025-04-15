@@ -69,7 +69,12 @@
               <span v-else-if="scope.row.vod_tag=='folder'">📂</span>
               <span v-else-if="scope.row.vod_id.endsWith('playlist$1')">▶️</span>
               <span v-else>🎬</span>
-              {{ scope.row.vod_name }}
+              <el-tooltip :content="getParent(scope.row.vod_id)" v-if="isHistory">
+                {{ scope.row.vod_name }}
+              </el-tooltip>
+              <span v-else>
+                {{ scope.row.vod_name }}
+              </span>
             </template>
           </el-table-column>
           <el-table-column label="大小" width="120" v-if="!isHistory">
@@ -118,7 +123,11 @@
           <el-col :span="5">
             <div v-if="playlist.length>1">
               <div style="margin-left: 30px; margin-bottom: 10px;">
-                <el-link :href="buildVlcUrl(currentVideoIndex)" target="_blank">第{{ currentVideoIndex + 1 }}集</el-link> /
+                <el-link :href="buildVlcUrl(currentVideoIndex)" target="_blank">第{{
+                    currentVideoIndex + 1
+                  }}集
+                </el-link>
+                /
                 <el-link :href="buildVlcUrl(0)" target="_blank">总共{{ playlist.length }}集</el-link>
               </div>
               <el-scrollbar ref="scrollbarRef" height="1050px">
@@ -308,6 +317,12 @@
         <el-form-item>
           <el-button type="primary" @click="updateTgWebChannels">更新</el-button>
         </el-form-item>
+        <el-form-item label="远程搜索地址">
+          <el-input v-model="tgSearch" placeholder="http://IP:7856"/>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="updateTgSearch">更新</el-button>
+        </el-form-item>
         <el-form-item label="搜索超时时间">
           <el-input-number v-model="tgTimeout" :min="500" :max="30000"/>&nbsp;毫秒
         </el-form-item>
@@ -352,6 +367,7 @@ const token = ref('')
 const keyword = ref('')
 const tgChannels = ref('')
 const tgWebChannels = ref('')
+const tgSearch = ref('')
 const tgTimeout = ref(3000)
 const shareType = ref('')
 const title = ref('')
@@ -488,6 +504,13 @@ const updateTgWebChannels = () => {
   })
 }
 
+const updateTgSearch = () => {
+  axios.post('/api/settings', {name: 'tg_search', value: tgSearch.value}).then(({data}) => {
+    tgSearch.value = data.value
+    ElMessage.success('更新成功')
+  })
+}
+
 const updateTgTimeout = () => {
   axios.post('/api/settings', {name: 'tg_timeout', value: tgTimeout.value + ''}).then(() => {
     ElMessage.success('更新成功')
@@ -511,6 +534,7 @@ const loadResult = (row: any) => {
     path: '',
     code: '',
   }
+  toClipboard(row.vod_play_url).then()
   axios.post('/api/share-link', form.value).then(({data}) => {
     loadFolder(data)
   })
@@ -585,6 +609,12 @@ const loadFiles = (path: string) => {
   }, () => {
     loading.value = false
   })
+}
+
+const getParent = (path: string) => {
+  path = getPath(path)
+  const index = path.lastIndexOf('/')
+  return path.substring(0, index)
 }
 
 const getPath = (id: string) => {
@@ -983,7 +1013,7 @@ const buildVlcUrl = (start: number) => {
     const path = getPath(id)
     const index = path.lastIndexOf('/')
     const parent = path.substring(0, index)
-    url = window.location.origin + '/m3u8' + token.value + '?path=' + parent + '$' + start
+    url = window.location.origin + '/m3u8' + token.value + '?path=' + encodeURIComponent(parent + '$' + start)
   }
   return `vlc://${url}`
 }
@@ -1065,8 +1095,15 @@ const getHistory = (id: string) => {
       return
     }
   }
-  currentTime.value = 0
   currentVideoIndex.value = 0
+  currentTime.value = 0
+  currentSpeed.value = 1
+  skipStart.value = 0
+  skipEnd.value = 0
+  minute1.value = 0
+  second1.value = 0
+  minute2.value = 0
+  second2.value = 0
 }
 
 const formatDate = (timestamp: number): string => {
@@ -1160,6 +1197,7 @@ onMounted(async () => {
   axios.get('/api/settings').then(({data}) => {
     tgChannels.value = data.tg_channels
     tgWebChannels.value = data.tg_web_channels
+    tgSearch.value = data.tg_search
     tgTimeout.value = +data.tg_timeout
   })
   currentVolume.value = parseInt(localStorage.getItem('volume') || '100')

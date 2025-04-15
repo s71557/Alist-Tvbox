@@ -1,10 +1,15 @@
 package cn.har01d.alist_tvbox.service;
 
 import cn.har01d.alist_tvbox.config.AppProperties;
+import cn.har01d.alist_tvbox.dto.ShareLink;
 import cn.har01d.alist_tvbox.dto.tg.Chat;
 import cn.har01d.alist_tvbox.dto.tg.Message;
+import cn.har01d.alist_tvbox.dto.tg.SearchResponse;
+import cn.har01d.alist_tvbox.dto.tg.SearchResult;
 import cn.har01d.alist_tvbox.entity.Setting;
 import cn.har01d.alist_tvbox.entity.SettingRepository;
+import cn.har01d.alist_tvbox.tvbox.MovieDetail;
+import cn.har01d.alist_tvbox.tvbox.MovieList;
 import cn.har01d.alist_tvbox.util.IdUtils;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -13,11 +18,14 @@ import okhttp3.Call;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+import org.apache.commons.lang3.StringUtils;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
+import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 import reactor.core.publisher.Mono;
 import telegram4j.core.MTProtoTelegramClient;
 import telegram4j.core.auth.AuthorizationHandler;
@@ -45,6 +53,8 @@ import telegram4j.tl.request.messages.ImmutableGetHistory;
 import telegram4j.tl.request.messages.ImmutableSearch;
 
 import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -56,11 +66,9 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -77,13 +85,19 @@ import static cn.har01d.alist_tvbox.util.Constants.USER_AGENT;
 public class TelegramService {
     private final AppProperties appProperties;
     private final SettingRepository settingRepository;
-    private final ExecutorService executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors() * 2);
+    private final ShareService shareService;
+    private final TvBoxService tvBoxService;
+    private final RestTemplate restTemplate;
+    private final ExecutorService executorService = Executors.newFixedThreadPool(Math.min(10, Runtime.getRuntime().availableProcessors() * 2));
     private final OkHttpClient httpClient = new OkHttpClient();
     private MTProtoTelegramClient client;
 
-    public TelegramService(AppProperties appProperties, SettingRepository settingRepository) {
+    public TelegramService(AppProperties appProperties, SettingRepository settingRepository, ShareService shareService, TvBoxService tvBoxService, RestTemplateBuilder restTemplateBuilder) {
         this.appProperties = appProperties;
         this.settingRepository = settingRepository;
+        this.shareService = shareService;
+        this.tvBoxService = tvBoxService;
+        this.restTemplate = restTemplateBuilder.build();
     }
 
     @PostConstruct
@@ -274,7 +288,7 @@ public class TelegramService {
         String[] channels = username.split(",");
         List<Future<List<Message>>> futures = new ArrayList<>();
         for (String channel : channels) {
-            Future<List<Message>> future = executorService.submit(() -> searchFromChannel(channel, keyword));
+            Future<List<Message>> future = executorService.submit(() -> searchFromChannel(channel, keyword, 100));
             futures.add(future);
         }
         long startTime = System.currentTimeMillis();
@@ -302,18 +316,25 @@ public class TelegramService {
 
     public String searchPg(String keyword, String username, String encode) {
         log.info("search {} from channels {}", keyword, username);
-        String[] channels = username.split(",");
-        List<Future<List<Message>>> futures = new ArrayList<>();
-        for (String channel : channels) {
-            String name = channel.split("\\|")[0];
-            Future<List<Message>> future = executorService.submit(() -> searchFromChannel(name, keyword));
-            futures.add(future);
+        List<Message> results = List.of();
+        if (StringUtils.isNotBlank(appProperties.getTgSearch())) {
+            results = searchRemote(username, keyword, 100);
         }
 
-        List<Message> list = getResult(futures);
+        if (results.isEmpty()) {
+            String[] channels = username.split(",");
+            List<Future<List<Message>>> futures = new ArrayList<>();
+            for (String channel : channels) {
+                String name = channel.split("\\|")[0];
+                Future<List<Message>> future = executorService.submit(() -> searchFromChannel(name, keyword, 100));
+                futures.add(future);
+            }
 
-        log.info("Search TG pg get {} results.", list.size());
-        return list.stream()
+            results = getResult(futures);
+        }
+
+        log.info("Search TG pg get {} results.", results.size());
+        return results.stream()
                 .map(Message::toPgString)
                 .map(e -> {
                     if ("1".equals(encode)) {
@@ -324,22 +345,79 @@ public class TelegramService {
                 .collect(Collectors.joining("\n"));
     }
 
-    public List<Message> search(String keyword) {
-        String[] channels;
-        if (client == null) {
-            channels = appProperties.getTgWebChannels().split(",");
-        } else {
-            channels = appProperties.getTgChannels().split(",");
+    public MovieList detail(String tid) {
+        ShareLink share = new ShareLink();
+        share.setLink(tid);
+        String path = shareService.add(share);
+
+        return tvBoxService.getDetail("", "1$" + path + "/~playlist");
+    }
+
+    private String encodeUrl(String url) {
+        return URLEncoder.encode(url, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
+    public MovieList searchMovies(String keyword, int size) {
+        MovieList result = new MovieList();
+        List<MovieDetail> list = new ArrayList<>();
+
+        List<Message> messages = search(keyword, size);
+        for (Message message : messages) {
+            MovieDetail movieDetail = new MovieDetail();
+            movieDetail.setVod_id(encodeUrl(message.getLink()));
+            movieDetail.setVod_name(message.getName());
+            movieDetail.setVod_remarks(getTypeName(message.getType()));
+            list.add(movieDetail);
         }
 
-        List<Future<List<Message>>> futures = new ArrayList<>();
-        for (String channel : channels) {
-            String name = channel.split("\\|")[0];
-            Future<List<Message>> future = executorService.submit(() -> searchFromChannel(name, keyword));
-            futures.add(future);
+        result.setList(list);
+        result.setTotal(list.size());
+        result.setLimit(list.size());
+
+        log.info("search {} got {} results.", keyword, list.size());
+        return result;
+    }
+
+    private String getTypeName(String type) {
+        if (type == null) {
+            return null;
+        }
+        return switch (type) {
+            case "0" -> "阿里";
+            case "1" -> "PikPak";
+            case "2" -> "迅雷";
+            case "3" -> "123";
+            case "5" -> "夸克";
+            case "7" -> "UC";
+            case "8" -> "115";
+            case "9" -> "天翼";
+            default -> null;
+        };
+    }
+
+    public List<Message> search(String keyword, int size) {
+        List<Message> results = List.of();
+        if (StringUtils.isNotBlank(appProperties.getTgSearch())) {
+            results = searchRemote(appProperties.getTgChannels(), keyword, size);
         }
 
-        List<Message> results = getResult(futures);
+        if (results.isEmpty()) {
+            String[] channels;
+            if (client == null) {
+                channels = appProperties.getTgWebChannels().split(",");
+            } else {
+                channels = appProperties.getTgChannels().split(",");
+            }
+
+            List<Future<List<Message>>> futures = new ArrayList<>();
+            for (String channel : channels) {
+                String name = channel.split("\\|")[0];
+                Future<List<Message>> future = executorService.submit(() -> searchFromChannel(name, keyword, size));
+                futures.add(future);
+            }
+
+            results = getResult(futures);
+        }
 
         List<Message> list = results.stream()
                 .filter(e -> !e.getContent().toLowerCase().contains("pdf"))
@@ -355,6 +433,21 @@ public class TelegramService {
                 .toList();
         log.info("Search {} get {} results.", keyword, list.size());
         return list;
+    }
+
+    private List<Message> searchRemote(String channels, String keyword, int size) {
+        String api = appProperties.getTgSearch();
+        if (!api.endsWith("/search")) {
+            api = api + "/search";
+        }
+        String url = api + "?channels=" + channels + "&query=" + keyword + "&size=" + size + "&timeout=" + appProperties.getTgTimeout();
+        try {
+            var response = restTemplate.getForObject(url, SearchResponse.class);
+            return response.getMessages().stream().flatMap(this::parseMessage).toList();
+        } catch (Exception e) {
+            log.warn("", e);
+        }
+        return List.of();
     }
 
     private List<Message> getResult(List<Future<List<Message>>> futures) {
@@ -393,7 +486,7 @@ public class TelegramService {
         return results;
     }
 
-    public List<Message> searchFromChannel(String username, String keyword) throws IOException {
+    public List<Message> searchFromChannel(String username, String keyword, int size) throws IOException {
         if (client == null) {
             List<Message> list = searchFromWeb(username, keyword);
             List<Message> result = list.stream().filter(e -> e.getType() != null).toList();
@@ -411,8 +504,8 @@ public class TelegramService {
             } else if (chat instanceof BaseChat) {
                 inputPeer = ImmutableInputPeerChat.of(chat.id());
             }
-            int minDate = (int) (Instant.now().minus(60, ChronoUnit.DAYS).truncatedTo(ChronoUnit.DAYS).toEpochMilli() / 1000);
-            Messages messages = client.getServiceHolder().getChatService().search(ImmutableSearch.of(inputPeer, keyword, InputMessagesFilterEmpty.instance(), minDate, 0, 0, 0, 100, 0, 0, 0)).block();
+            int minDate = (int) (Instant.now().minus(90, ChronoUnit.DAYS).truncatedTo(ChronoUnit.DAYS).toEpochMilli() / 1000);
+            Messages messages = client.getServiceHolder().getChatService().search(ImmutableSearch.of(inputPeer, keyword, InputMessagesFilterEmpty.instance(), minDate, 0, 0, 0, size, 0, 0, 0)).block();
             if (messages instanceof ChannelMessages) {
                 result = ((ChannelMessages) messages).messages().stream().filter(e -> e instanceof BaseMessage).map(BaseMessage.class::cast).flatMap(e -> parseMessage(username, e)).toList();
             }
@@ -427,6 +520,14 @@ public class TelegramService {
         List<Message> list = new ArrayList<>();
         for (String link : Message.parseLinks(message.message())) {
             list.add(new Message(channel, message, link));
+        }
+        return list.stream();
+    }
+
+    private Stream<Message> parseMessage(SearchResult result) {
+        List<Message> list = new ArrayList<>();
+        for (String link : Message.parseLinks(result.getContent())) {
+            list.add(new Message(result, link));
         }
         return list.stream();
     }
@@ -517,6 +618,19 @@ public class TelegramService {
                 .addHeader("Accept-Language", "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7,ja;q=0.6,zh-TW;q=0.5")
                 .addHeader("User-Agent", USER_AGENT)
                 .addHeader("Referer", "https://t.me/")
+                .build();
+
+        Call call = httpClient.newCall(request);
+        Response response = call.execute();
+        String html = response.body().string();
+        response.close();
+
+        return html;
+    }
+
+    private String getJson(String url) throws IOException {
+        Request request = new Request.Builder()
+                .url(url)
                 .build();
 
         Call call = httpClient.newCall(request);

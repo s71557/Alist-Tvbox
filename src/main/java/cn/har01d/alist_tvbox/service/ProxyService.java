@@ -110,13 +110,15 @@ public class ProxyService {
 
             if (fsDetail.getProvider().contains("Aliyundrive")) {
                 url = fsDetail.getRawUrl();
+                headers.put("origin", Constants.ALIPAN);
             } /*else if (fsDetail.getProvider().contains("Thunder")) {
                 url = fsDetail.getRawUrl();
                 headers.put("user-agent", "AndroidDownloadManager/13 (Linux; U; Android 13; M2004J7AC Build/SP1A.210812.016)");
-            }*/ else if (fsDetail.getProvider().equals("115 Cloud") || fsDetail.getProvider().equals("115 Share")) {
+            }*/ else if (fsDetail.getProvider().contains("115")) {
                 url = fsDetail.getRawUrl();
                 String cookie = panAccountRepository.findByTypeAndMasterTrue(DriverType.PAN115).map(DriverAccount::getCookie).orElse("");
                 headers.put("cookie", cookie);
+                //headers.put("p115uid", "");
                 headers.put("referer", "https://115.com/");
             } else {
                 url = buildProxyUrl(site, path, fsDetail.getSign());
