@@ -80,7 +80,7 @@ public class ShareService {
     private final AListService aListService;
     private final ConfigFileService configFileService;
     private final PikPakService pikPakService;
-    private final PanAccountService panAccountService;
+    private final DriverAccountService driverAccountService;
     private final RestTemplate restTemplate;
     private final Environment environment;
 
@@ -95,7 +95,7 @@ public class ShareService {
                         PikPakAccountRepository pikPakAccountRepository,
                         DriverAccountRepository panAccountRepository,
                         AListService aListService,
-                        PanAccountService panAccountService,
+                        DriverAccountService driverAccountService,
                         AppProperties appProperties,
                         AccountService accountService,
                         AListLocalService aListLocalService,
@@ -112,7 +112,7 @@ public class ShareService {
         this.pikPakAccountRepository = pikPakAccountRepository;
         this.panAccountRepository = panAccountRepository;
         this.aListService = aListService;
-        this.panAccountService = panAccountService;
+        this.driverAccountService = driverAccountService;
         this.accountService = accountService;
         this.aListLocalService = aListLocalService;
         this.configFileService = configFileService;
@@ -127,7 +127,7 @@ public class ShareService {
         loadOpenTokenUrl();
 
         pikPakService.readPikPak();
-        panAccountService.loadStorages();
+        driverAccountService.loadStorages();
 
         cleanShares();
 
@@ -431,7 +431,6 @@ public class ShareService {
 
         boolean pikpak = false;
         try {
-            Account account1 = accountRepository.getFirstByMasterTrue().orElse(new Account());
             PikPakAccount account2 = pikPakAccountRepository.getFirstByMasterTrue().orElse(new PikPakAccount());
             for (Share share : list) {
                 try {
@@ -453,11 +452,11 @@ public class ShareService {
                         int count = Utils.executeUpdate(String.format(sql, share.getId(), share.getPath(), share.getFolderId()));
                         log.info("insert Share {} {}: {}, result: {}", share.getId(), share.getPath(), share.getFolderId(), count);
                     } else if (share.getType() == 5) {
-                        String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'QuarkShare',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','');";
+                        String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'QuarkShare',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"file_name\",\"order_direction\":\"asc\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','');";
                         int count = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getShareId(), share.getPassword(), share.getFolderId()));
                         log.info("insert Share {} {}: {}, result: {}", share.getId(), share.getShareId(), getMountPath(share), count);
                     } else if (share.getType() == 7) {
-                        String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'UCShare',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','');";
+                        String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'UCShare',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"file_name\",\"order_direction\":\"asc\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','');";
                         int count = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getShareId(), share.getPassword(), share.getFolderId()));
                         log.info("insert Share {} {}: {}, result: {}", share.getId(), share.getShareId(), getMountPath(share), count);
                     } else if (share.getType() == 9) {
@@ -809,10 +808,13 @@ public class ShareService {
         String path = share.getPath();
         if (!shareRepository.existsByPath(path)) {
             create(share);
+            if (StringUtils.isNotBlank(share.getError())) {
+                throw new BadRequestException(share.getError());
+            }
         }
         Site site = siteRepository.findById(1).orElseThrow();
 
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < 3; i++) {
             FsResponse response = aListService.listFiles(site, path, 1, 1);
             if (response.getTotal() == 1 && response.getFiles().get(0).getType() == 1) {
                 path = path + "/" + response.getFiles().get(0).getName();
@@ -850,10 +852,10 @@ public class ShareService {
                 int count = Utils.executeUpdate(String.format(sql, share.getId(), share.getPath(), share.getFolderId()));
                 log.info("insert Share {} {}: {}, result: {}", share.getId(), share.getPath(), share.getFolderId(), count);
             } else if (share.getType() == 5) {
-                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'QuarkShare',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
+                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'QuarkShare',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"file_name\",\"order_direction\":\"asc\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
                 result = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getShareId(), share.getPassword(), share.getFolderId()));
             } else if (share.getType() == 7) {
-                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'UCShare',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
+                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'UCShare',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"file_name\",\"order_direction\":\"asc\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
                 result = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getShareId(), share.getPassword(), share.getFolderId()));
             } else if (share.getType() == 9) {
                 String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'189Share',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
@@ -869,7 +871,8 @@ public class ShareService {
 
             shareRepository.save(share);
 
-            enableStorage(share.getId(), token);
+            String error = enableStorage(share.getId(), token);
+            share.setError(error);
         } catch (Exception e) {
             log.warn("", e);
             throw new BadRequestException(e);
@@ -907,10 +910,10 @@ public class ShareService {
                 int count = Utils.executeUpdate(String.format(sql, share.getId(), share.getPath(), share.getFolderId()));
                 log.info("insert Share {} {}: {}, result: {}", share.getId(), share.getPath(), share.getFolderId(), count);
             } else if (share.getType() == 5) {
-                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'QuarkShare',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
+                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'QuarkShare',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"file_name\",\"order_direction\":\"asc\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
                 result = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getShareId(), share.getPassword(), share.getFolderId()));
             } else if (share.getType() == 7) {
-                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'UCShare',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
+                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'UCShare',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"file_name\",\"order_direction\":\"asc\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
                 result = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getShareId(), share.getPassword(), share.getFolderId()));
             } else if (share.getType() == 9) {
                 String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'189Share',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0);";
@@ -973,12 +976,18 @@ public class ShareService {
         }
     }
 
-    public void enableStorage(Integer id, String token) {
+    public String enableStorage(Integer id, String token) {
         HttpHeaders headers = new HttpHeaders();
         headers.put("Authorization", Collections.singletonList(token));
         HttpEntity<String> entity = new HttpEntity<>(null, headers);
-        ResponseEntity<String> response = restTemplate.exchange("/api/admin/storage/enable?id=" + id, HttpMethod.POST, entity, String.class);
+        ResponseEntity<Map> response = restTemplate.exchange("/api/admin/storage/enable?id=" + id, HttpMethod.POST, entity, Map.class);
         log.info("enable storage response: {}", response.getBody());
+        int code = (int) response.getBody().get("code");
+        if (code >= 400) {
+            return (String) response.getBody().get("message");
+        } else {
+            return null;
+        }
     }
 
     public void deleteShares(List<Integer> ids) {

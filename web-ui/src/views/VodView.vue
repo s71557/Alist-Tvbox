@@ -98,6 +98,11 @@
           <el-table-column prop="index" label="集数" width="90" v-if="isHistory"/>
           <el-table-column prop="progress" label="进度" width="120" v-if="isHistory"/>
           <el-table-column prop="vod_time" :label="isHistory?'播放时间':'修改时间'" width="165"/>
+          <el-table-column width="90" v-if="isHistory">
+            <template #default="scope">
+              <el-button link type="danger" @click.stop="deleteHistory(scope.row.vod_id)">删除</el-button>
+            </template>
+          </el-table-column>
         </el-table>
         <el-pagination layout="total, prev, pager, next, jumper, sizes"
                        :current-page="page" :page-size="size" :total="total"
@@ -157,7 +162,7 @@
                 <el-button @click="playNextVideo" v-if="playlist.length>1">下集</el-button>
                 <el-popover placement="bottom" width="400px" v-if="playlist.length>1">
                   <template #reference>
-                    <el-button>片头</el-button>
+                    <el-button>片头<span v-if="skipStart">★</span></el-button>
                   </template>
                   <template #default>
                     跳过片头
@@ -185,7 +190,7 @@
                 </el-popover>
                 <el-popover placement="bottom" width="400px" v-if="playlist.length>1">
                   <template #reference>
-                    <el-button>片尾</el-button>
+                    <el-button>片尾<span v-if="skipEnd">★</span></el-button>
                   </template>
                   <template #default>
                     跳过片尾
@@ -241,7 +246,9 @@
                       <div>静音： m</div>
                       <div>减速： -</div>
                       <div>加速： +</div>
-                      <div>普速： =</div>
+                      <div>原速： =</div>
+                      <div>音量-： [</div>
+                      <div>音量+： ]</div>
                       <div>后退15秒： ←</div>
                       <div>前进15秒： →</div>
                       <div v-if="playlist.length>1">上集： ↑</div>
@@ -571,13 +578,6 @@ const imageUrl = (url: string) => {
   return '/images?url=' + encodeURIComponent(url)
 }
 
-const newImageUrl = (url: string) => {
-  if (url.endsWith("/folder.png")) {
-    return url;
-  }
-  return '/images?url=' + encodeURIComponent(url.replace('/s_ratio_poster/', '/m/'))
-}
-
 const handleSizeChange = (value: number) => {
   size.value = value
   reload(1)
@@ -598,6 +598,9 @@ const loadFolder = (path: string) => {
 }
 
 const loadFiles = (path: string) => {
+  if (path == '/~history') {
+    return
+  }
   const id = extractPaths(path)
   isHistory.value = false
   loading.value = true
@@ -729,6 +732,12 @@ const handleKeyDown = (event: KeyboardEvent) => {
   } else if (event.key === '=') {
     event.preventDefault()
     setSpeed(1.0)
+  } else if (event.key === '[') {
+    event.preventDefault()
+    decVolume()
+  } else if (event.key === ']') {
+    event.preventDefault()
+    incVolume()
   } else if (event.code === 'KeyM') {
     if (event.ctrlKey || event.metaKey) {
       return;
@@ -936,10 +945,26 @@ const handleVolumeChange = () => {
   }
 }
 
+const incVolume = () => {
+  let volume = currentVolume.value + 5
+  if (volume > 100) {
+    volume = 100
+  }
+  setVolume(volume)
+}
+
+const decVolume = () => {
+  let volume = currentVolume.value - 5
+  if (volume < 0) {
+    volume = 0
+  }
+  setVolume(volume)
+}
+
 const handleTimeUpdate = () => {
   if (videoPlayer.value) {
     const time = videoPlayer.value.currentTime
-    if (duration.value > skipStart.value + skipEnd.value && time + skipEnd.value > duration.value) {
+    if (currentVideoIndex.value + 1 < playlist.value.length && duration.value > skipStart.value + skipEnd.value && time + skipEnd.value > duration.value && time < duration.value) {
       videoPlayer.value.currentTime = duration.value
     }
   }
@@ -1075,7 +1100,7 @@ const saveHistory = () => {
     s: currentSpeed.value,
     t: new Date().getTime()
   })
-  const sorted = items.sort((a, b) => b.t - a.t).slice(0, 40);
+  const sorted = items.sort((a, b) => b.t - a.t).slice(0, 80);
   localStorage.setItem('history', JSON.stringify(sorted))
 }
 
@@ -1150,6 +1175,12 @@ const loadHistory = () => {
   isHistory.value = true
   total.value = files.value.length
   paths.value = [{text: '🏠首页', path: '/'}, {text: '播放记录', path: '/~history'}]
+}
+
+const deleteHistory = (id: string) => {
+  const items = JSON.parse(localStorage.getItem('history') || '[]').filter(e => e.id != id)
+  localStorage.setItem('history', JSON.stringify(items))
+  loadHistory()
 }
 
 const clearHistory = () => {
