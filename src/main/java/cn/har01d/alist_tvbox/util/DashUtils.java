@@ -108,7 +108,6 @@ public final class DashUtils {
         }
         map.put("jx", "0");
         map.put("parse", "0");
-        map.put("key", "BiliBili");
         return map;
     }
 

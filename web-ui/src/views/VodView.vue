@@ -142,6 +142,7 @@
             <video
               ref="videoPlayer"
               :src="playUrl"
+              :poster="poster"
               :autoplay="true"
               @ended="playNextVideo"
               @play="updatePlayState"
@@ -259,6 +260,24 @@
                     <el-slider v-model="currentVolume" @change="setVolume" :min="0" :max="100" :step="5"/>
                   </template>
                 </el-popover>
+                <el-popover placement="bottom" width="350px">
+                  <template #reference>
+                    <el-button :icon="Menu"></el-button>
+                  </template>
+                  <template #default>
+                    <div class="players">
+                      <a :href="'iina://weblink?url='+playUrl"><img alt="iina" src="/iina.webp"></a>
+                      <a :href="'potplayer://'+playUrl"><img alt="potplayer" src="/potplayer.webp"></a>
+                      <a :href="'vlc://'+playUrl"><img alt="vlc" src="/vlc.webp"></a>
+                      <a :href="'nplayer-'+playUrl"><img alt="nplayer" src="/nplayer.webp"></a>
+                      <a :href="'omniplayer://weblink?url='+playUrl"><img alt="omniplayer" src="/omniplayer.webp"></a>
+                      <a :href="'figplayer://weblink?url='+playUrl"><img alt="figplayer" src="/figplayer.webp"></a>
+                      <a :href="'infuse://x-callback-url/play?url='+playUrl"><img alt="infuse" src="/infuse.webp"></a>
+                      <a :href="'filebox://play?url='+playUrl"><img alt="fileball" src="/fileball.webp"></a>
+                      <!--                      <a :href="'iplay://play/any?type=url&url='+playUrl"><img alt="iPlay" src="/iPlay.webp"></a>-->
+                    </div>
+                  </template>
+                </el-popover>
                 <el-popover placement="right-start">
                   <template #reference>
                     <el-button :icon="QuestionFilled"/>
@@ -333,7 +352,7 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="settingVisible" title="搜索配置">
+    <el-dialog v-model="settingVisible" title="播放配置">
       <el-form label-width="140">
         <el-form-item label="电报频道群组">
           <el-input v-model="tgChannels" :rows="3" type="textarea" placeholder="逗号分割，留空使用默认值"/>
@@ -361,6 +380,12 @@
         <el-form-item>
           <el-button type="primary" @click="updateTgTimeout">更新</el-button>
         </el-form-item>
+        <el-form-item label="默认视频壁纸">
+          <el-input v-model="cover"/>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="updateCover">更新</el-button>
+        </el-form-item>
       </el-form>
       <template #footer>
       <span class="dialog-footer">
@@ -381,7 +406,7 @@ import type {VodItem} from "@/model/VodItem";
 import {useRoute, useRouter} from "vue-router";
 import clipBorad from "vue-clipboard3";
 import {onUnmounted} from "@vue/runtime-core";
-import {Delete, Film, Plus, QuestionFilled, Search, Setting} from "@element-plus/icons-vue";
+import {Delete, Film, Menu, Plus, QuestionFilled, Search, Setting} from "@element-plus/icons-vue";
 
 let {toClipboard} = clipBorad();
 
@@ -404,6 +429,8 @@ const tgTimeout = ref(3000)
 const shareType = ref('')
 const title = ref('')
 const playUrl = ref('')
+const poster = ref('')
+const cover = ref('')
 const movies = ref<VodItem[]>([])
 const playFrom = ref<string[]>([])
 const playlist = ref<Item[]>([])
@@ -546,6 +573,13 @@ const updateTgSearch = () => {
   })
 }
 
+const updateCover = () => {
+  axios.post('/api/settings', {name: 'video_cover', value: cover.value}).then(({data}) => {
+    cover.value = data.value
+    ElMessage.success('更新成功')
+  })
+}
+
 const updateTgTimeout = () => {
   axios.post('/api/settings', {name: 'tg_timeout', value: tgTimeout.value + ''}).then(() => {
     ElMessage.success('更新成功')
@@ -683,6 +717,12 @@ const loadDetail = (id: string) => {
 
     movies.value = data.list
     movies.value[0].vod_id = id
+    const pic = movies.value[0].vod_pic
+    if (pic && pic.includes('doubanio.com')) {
+      poster.value = '/images?url=' + pic.replace('s_ratio_poster', 'm')
+    } else {
+      poster.value = cover.value ? '/images?url=' + cover.value : ''
+    }
     playFrom.value = movies.value[0].vod_play_from.split("$$$");
     playlist.value = movies.value[0].vod_play_url.split("$$$")[0].split("#").map(e => {
       let u = e.split('$')
@@ -1291,6 +1331,7 @@ onMounted(async () => {
     tgChannels.value = data.tg_channels
     tgWebChannels.value = data.tg_web_channels
     tgSearch.value = data.tg_search
+    cover.value = data.video_cover
     tgTimeout.value = +data.tg_timeout
   })
   currentVolume.value = parseInt(localStorage.getItem('volume') || '100')
@@ -1320,5 +1361,14 @@ video {
   width: 100%;
   max-height: 1080px;
   overflow: auto;
+}
+
+.players img {
+  width: 26px;
+  height: 26px;
+}
+
+.players a {
+  margin: 0 6px;
 }
 </style>

@@ -63,6 +63,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.LoadingCache;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.Call;
@@ -274,6 +276,9 @@ public class BiliBiliService {
     private final RestTemplate restTemplate1;
     private final ObjectMapper objectMapper;
     private final OkHttpClient client = new OkHttpClient();
+    private final LoadingCache<String, BiliBiliInfo> cache = Caffeine.newBuilder()
+            .maximumSize(10)
+            .build(this::getInfo);
     private MovieDetail searchPlaylist;
     private String keyword = "";
     private int searchPage;
@@ -383,6 +388,14 @@ public class BiliBiliService {
                     log.info("扫码登录成功");
                     String cookie = response.getHeaders().get("set-cookie").stream().map(e -> e.split(";")[0]).collect(Collectors.joining(";"));
                     settingRepository.save(new Setting(BILIBILI_COOKIE, cookie));
+//                    try {
+//                        HttpEntity<Void> entity = buildHttpEntity(null);
+//                        var body = restTemplate.exchange("https://api.bilibili.com/x/frontend/finger/spi", HttpMethod.GET, entity, JsonNode.class).getBody();
+//                        cookie += ";buvid3=" + body.get("data").get("b_3").asText() + ";buvid4=" + body.get("data").get("b_4").asText();
+//                        settingRepository.save(new Setting(BILIBILI_COOKIE, cookie));
+//                    } catch (Exception e) {
+//                        log.warn("get buvid3 failed", e);
+//                    }
                     return code;
                 }
             } else if (code == 86038) {
@@ -806,20 +819,20 @@ public class BiliBiliService {
         map.put("pn", page);
         map.put("ps", 30);
         map.put("tid", 0);
+        map.put("index", 0);
         map.put("keyword", "");
+        map.put("special_type", "");
         map.put("order", sort);
         map.put("platform", "web");
-        map.put("web_location", "1550101");
-        map.put("order_avoided", "true");
+        map.put("web_location", "333.1387");
+        map.put("order_avoided", true);
         map.put("dm_img_list", "[]");
-        map.put("dm_img_inter", "{\"ds\":[{\"t\":4,\"c\":\"bW9yZQ\",\"p\":[36,12,12],\"s\":[218,218,436]}],\"wh\":[5622,4674,22],\"of\":[431,862,431]}");
+        map.put("dm_img_inter", "{\"ds\":[{\"t\":1,\"c\":\"\",\"p\":[330,110,110],\"s\":[61,61,122]}],\"wh\":[6025,5600,11],\"of\":[316,632,316]}");
         map.put("dm_img_str", "V2ViR0wgMS4wIChPcGVuR0wgRVMgMi4wIENocm9taXVtKQ");
         map.put("dm_cover_img_str", "QU5HTEUgKE5WSURJQSBDb3Jwb3JhdGlvbiwgTlZJRElBIEdlRm9yY2UgUlRYIDQwNjAgVGkvUENJZS9TU0UyLCBPcGVuR0wgNC41LjApR29vZ2xlIEluYy4gKE5WSURJQSBDb3Jwb3JhdGlvbi");
 
-        HttpEntity<Void> entity = buildHttpEntity(null);
+        HttpEntity<Void> entity = buildHttpEntity(null, Map.of("Referer", "https://space.bilibili.com"));
         getKeys(entity);
-        String webId = getWebId(mid);
-        map.put("w_webid", webId);
         String url = NEW_SEARCH_API + "?" + Utils.encryptWbi(map, imgKey, subKey);
         log.debug("getUpMedia: {}", url);
 
@@ -872,26 +885,25 @@ public class BiliBiliService {
         }
         Map<String, Object> map = new HashMap<>();
         map.put("mid", id);
-        map.put("ps", 30);
         map.put("pn", page);
+        map.put("ps", 30);
         map.put("tid", 0);
+        map.put("index", 0);
         map.put("keyword", "");
+        map.put("special_type", "");
         map.put("order", sort);
         map.put("platform", "web");
-        map.put("web_location", "1550101");
-        map.put("order_avoided", "true");
+        map.put("web_location", "333.1387");
+        map.put("order_avoided", true);
         map.put("dm_img_list", "[]");
-        map.put("dm_img_inter", "{\"ds\":[{\"t\":4,\"c\":\"bW9yZQ\",\"p\":[36,12,12],\"s\":[218,218,436]}],\"wh\":[5622,4674,22],\"of\":[431,862,431]}");
+        map.put("dm_img_inter", "{\"ds\":[{\"t\":1,\"c\":\"\",\"p\":[330,110,110],\"s\":[61,61,122]}],\"wh\":[6025,5600,11],\"of\":[316,632,316]}");
         map.put("dm_img_str", "V2ViR0wgMS4wIChPcGVuR0wgRVMgMi4wIENocm9taXVtKQ");
         map.put("dm_cover_img_str", "QU5HTEUgKE5WSURJQSBDb3Jwb3JhdGlvbiwgTlZJRElBIEdlRm9yY2UgUlRYIDQwNjAgVGkvUENJZS9TU0UyLCBPcGVuR0wgNC41LjApR29vZ2xlIEluYy4gKE5WSURJQSBDb3Jwb3JhdGlvbi");
 
-        HttpEntity<Void> entity = buildHttpEntity(null);
+        HttpEntity<Void> entity = buildHttpEntity(null, Map.of("Referer", "https://space.bilibili.com"));
         getKeys(entity);
-        String webId = getWebId(id);
-        map.put("w_webid", webId);
         String url = NEW_SEARCH_API + "?" + Utils.encryptWbi(map, imgKey, subKey);
         log.debug("getUpPlaylist: {}", url);
-
 
         BiliBiliSearchInfoResponse response = getJson(url, BiliBiliSearchInfoResponse.class);
         log.debug("{}", response);
@@ -1099,7 +1111,7 @@ public class BiliBiliService {
         return result;
     }
 
-    public MovieList getDetail(String bvid) throws IOException {
+    public MovieList getDetail(String bvid, String client) throws IOException {
         log.debug("--- getDetail --- {}", bvid);
         if (bvid.startsWith("channel$")) {
             return getChannelPlaylist(bvid);
@@ -1145,7 +1157,7 @@ public class BiliBiliService {
             return getBangumi(bvid);
         }
 
-        BiliBiliInfo info = getInfo(bvid);
+        BiliBiliInfo info = cache.get(bvid);
         MovieDetail movieDetail = getMovieDetail(info, true);
 
         try {
@@ -1164,14 +1176,21 @@ public class BiliBiliService {
         }
 
         if (info.getOwner() != null) {
-            try {
-                MovieList movieList = getUpPlaylist("up$" + info.getOwner().getMid());
-                movieDetail.setVod_play_from(movieDetail.getVod_play_from() + "$$$UP主视频");
-                String others = movieList.getList().get(0).getVod_play_url();
-                movieDetail.setVod_play_url(movieDetail.getVod_play_url() + "$$$" + others);
-            } catch (Exception e) {
-                log.warn("get UP playlist failed", e);
+            if ("com.fongmi.android.tv".equals(client)) {
+                long id = info.getOwner().getMid();
+                String name = info.getOwner().getName();
+                String owner = String.format("[a=cr:{\"id\":\"up:%d\",\"name\":\"%s\"}/]%s[/a]", id, name, name);
+                movieDetail.setVod_director(owner);
             }
+
+//            try {
+//                MovieList movieList = getUpPlaylist("up$" + info.getOwner().getMid());
+//                movieDetail.setVod_play_from(movieDetail.getVod_play_from() + "$$$UP主视频");
+//                String others = movieList.getList().get(0).getVod_play_url();
+//                movieDetail.setVod_play_url(movieDetail.getVod_play_url() + "$$$" + others);
+//            } catch (Exception e) {
+//                log.warn("get UP playlist failed", e);
+//            }
         }
 
         MovieList result = new MovieList();
@@ -1366,7 +1385,7 @@ public class BiliBiliService {
             aid = parts[0];
             cid = parts[1];
         } else {
-            BiliBiliInfo info = getInfo(bvid);
+            BiliBiliInfo info = cache.get(bvid);
             aid = String.valueOf(info.getAid());
             cid = String.valueOf(info.getCid());
         }
@@ -1411,7 +1430,7 @@ public class BiliBiliService {
         String cookie = entity.getHeaders().getFirst("Cookie");
         Map<String, String> headers = new HashMap<>();
         headers.put("Referer", "https://www.bilibili.com");
-        headers.put("cookie", cookie);
+        headers.put("Cookie", cookie);
         headers.put("User-Agent", USER_AGENT);
         result.put("header", headers);
 
@@ -1437,7 +1456,7 @@ public class BiliBiliService {
             HttpEntity<Void> entity = buildHttpEntity(null);
             ResponseEntity<BiliBiliV2InfoResponse> response = restTemplate.exchange(url, HttpMethod.GET, entity, BiliBiliV2InfoResponse.class);
             for (BiliBiliV2Info.Subtitle subtitle : response.getBody().getData().getSubtitle().getSubtitles()) {
-                if (subtitle.getLan_doc().contains("中文") && subtitle.getLan_doc().contains("自动生成")) {
+                if (subtitle.getLan_doc().contains("中文") && (subtitle.getLan_doc().contains("自动生成") || subtitle.getLan_doc().contains("自动翻译"))) {
                     continue;
                 }
                 Sub sub = new Sub();
