@@ -59,6 +59,8 @@ public class AListLocalService {
         Utils.executeUpdate("INSERT INTO x_setting_items VALUES('external_port','" + port + "','','number','',1,0);");
         String url = settingRepository.findById("open_token_url").map(Setting::getValue).orElse("https://api.xhofe.top/alist/ali_open/token");
         Utils.executeUpdate("INSERT INTO x_setting_items VALUES('open_token_url','" + url + "','','string','',1,0);");
+        String apiKey = settingRepository.findById("api_key").map(Setting::getValue).orElse("");
+        Utils.executeUpdate("INSERT INTO x_setting_items VALUES('atv_api_key','" + apiKey + "','','string','',1,0);");
         String clientId = settingRepository.findById("open_api_client_id").map(Setting::getValue).orElse("");
         Utils.executeUpdate("INSERT INTO x_setting_items VALUES('open_api_client_id','" + clientId + "','','string','',1,0);");
         String clientSecret = settingRepository.findById("open_api_client_secret").map(Setting::getValue).orElse("");
@@ -71,6 +73,8 @@ public class AListLocalService {
         Utils.executeUpdate("INSERT INTO x_setting_items VALUES('delete_delay_time','" + time + "','','number','',1,0)");
         String aliTo115 = settingRepository.findById("ali_to_115").map(Setting::getValue).orElse("false");
         Utils.executeUpdate("INSERT INTO x_setting_items VALUES('ali_to_115','" + aliTo115 + "','','bool','',1,0)");
+        String roundRobin = settingRepository.findById("driver_round_robin").map(Setting::getValue).orElse("false");
+        Utils.executeUpdate("INSERT INTO x_setting_items VALUES('driver_round_robin','" + roundRobin + "','','bool','',1,0)");
         String lazy = settingRepository.findById("ali_lazy_load").map(Setting::getValue).orElse("true");
         Utils.executeUpdate("INSERT INTO x_setting_items VALUES('ali_lazy_load','" + lazy + "','','bool','',1,0)");
     }

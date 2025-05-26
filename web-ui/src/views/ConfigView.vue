@@ -253,6 +253,15 @@
             @change="updateAListDebug"
           />
         </el-form-item>
+        <el-form-item label="网盘帐号负载均衡">
+          <el-switch
+            v-model="driverRoundRobin"
+            inline-prompt
+            active-text="开启"
+            inactive-text="关闭"
+            @change="updateDriverRoundRobin"
+          />
+        </el-form-item>
         <el-form-item label="开启阿里快传115">
           <el-switch
             v-model="aliTo115"
@@ -334,14 +343,14 @@ const options = [
       {label: 'ycyup', value: 'https://ycyup.cn/alipan/access_token'},
     ]
   },
-  {
-    label: '会员TV Token',
-    options: [
-      {label: '会员 - 本地', value: window.location.origin + '/ali/access_token'},
-      {label: '会员 - 三方', value: 'https://alipan-tv-token.pages.dev/refresh'},
-      {label: '会员 - i-tools', value: 'https://i-tools.ilay.top/api/oauth/alipan/token'},
-    ]
-  },
+  // {
+  //   label: '会员TV Token',
+  //   options: [
+  //     {label: '会员 - 本地', value: window.location.origin + '/ali/access_token'},
+  //     {label: '会员 - 三方', value: 'https://alipan-tv-token.pages.dev/refresh'},
+  //     {label: '会员 - i-tools', value: 'https://i-tools.ilay.top/api/oauth/alipan/token'},
+  //   ]
+  // },
   {
     label: '阿里',
     options: [
@@ -357,6 +366,7 @@ const replaceAliToken = ref(false)
 const debugLog = ref(false)
 const aListDebug = ref(false)
 const aliTo115 = ref(false)
+const driverRoundRobin = ref(false)
 const aliLazyLoad = ref(false)
 const enableHttps = ref(false)
 const autoCheckin = ref(false)
@@ -494,6 +504,12 @@ const updateAliTo115 = () => {
   })
 }
 
+const updateDriverRoundRobin = () => {
+  axios.post('/api/settings', {name: 'driver_round_robin', value: driverRoundRobin.value}).then(() => {
+    ElMessage.success('更新成功')
+  })
+}
+
 const updateDeleteCode115 = () => {
   axios.post('/api/settings', {name: 'delete_code_115', value: deleteCode115.value}).then(() => {
     ElMessage.success('更新成功')
@@ -568,6 +584,7 @@ onMounted(() => {
     debugLog.value = data.debug_log === 'true'
     aListDebug.value = data.alist_debug === 'true'
     aliTo115.value = data.ali_to_115 === 'true'
+    driverRoundRobin.value = data.driver_round_robin === 'true'
     aliLazyLoad.value = data.ali_lazy_load === 'true'
     mixSiteSource.value = data.mix_site_source !== 'false'
     atvPass.value = data.atv_password
