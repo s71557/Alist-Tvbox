@@ -16,6 +16,7 @@ public final class Constants {
     public static final String UC_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) uc-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch";
     public static final String AndroidXMedia3 = "com.android.chrome/131.0.6778.200 (Linux;Android 15) AndroidXMedia3/1.5.1";
     public static final String ALIPAN = "https://www.alipan.com/";
+    public static final String STORAGE_ID_FRAGMENT = "#storageId=";
 
     public static final String ALIST_PIC = "https://avatars.githubusercontent.com/u/97389433?s=120&v=4";
     public static final String TMDB_API_KEY = "77f111cda6c6fb55322f3d7f2b6ef71f";
@@ -27,8 +28,8 @@ public final class Constants {
 
     public static final String DB_URL = "jdbc:sqlite:/opt/alist/data/data.db";
 
-    public static String TG_CHANNELS = "xx123pan1,xunleiyunpan,tgsearchers,leoziyuan,ucpanpan,zyfb123,zyzhpd123,xx123pan,tianyirigeng,tyypzhpd,cloudtianyi,kuakeclound,clouddriveresources,NewQuark,guaguale115,Channel_Shares_115,dianyingshare,XiangxiuNB,yunpanpan,kuakeyun,zaihuayun,Quark_Movies,vip115hot,yunpanshare,shareAliyun,alyp_1,yunpan139";
-    public static String TG_WEB_CHANNELS = "tgsearchers,leoziyuan,ucpanpan,zyfb123,zyzhpd123,xx123pan,tianyirigeng,tyypzhpd,cloudtianyi,kuakeclound,clouddriveresources,NewQuark,guaguale115,Channel_Shares_115,dianyingshare,XiangxiuNB,yunpanpan,kuakeyun,zaihuayun,Quark_Movies,vip115hot,yunpanshare,shareAliyun,alyp_1";
+    public static String TG_CHANNELS = "xx123pan1,xunleiyunpan,tgsearchers2,leoziyuan,zyzhpd123,xx123pan,tianyirigeng,tyypzhpd,cloudtianyi,kuakeclound,clouddriveresources,NewQuark,Channel_Shares_115,dianyingshare,XiangxiuNB,zaihuayun,Quark_Movies,vip115hot,yunpanshare,shareAliyun,alyp_1,yunpan139";
+    public static String TG_WEB_CHANNELS = "tgsearchers2,leoziyuan,zyzhpd123,xx123pan,tianyirigeng,tyypzhpd,cloudtianyi,kuakeclound,clouddriveresources,NewQuark,Channel_Shares_115,dianyingshare,XiangxiuNB,zaihuayun,Quark_Movies,vip115hot,shareAliyun,alyp_1";
 
     public static final String ACCESS_TOKEN = "access_token";
     public static final String REFRESH_TOKEN = "refresh_token";

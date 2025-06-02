@@ -24,7 +24,9 @@ import cn.har01d.alist_tvbox.model.LoginRequest;
 import cn.har01d.alist_tvbox.model.LoginResponse;
 import cn.har01d.alist_tvbox.model.Response;
 import cn.har01d.alist_tvbox.util.Utils;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -32,6 +34,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.core.env.Environment;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -66,6 +69,7 @@ import static cn.har01d.alist_tvbox.util.Constants.OPEN_TOKEN_URL;
 public class ShareService {
 
     private final ObjectMapper objectMapper;
+    private final AppProperties appProperties;
     private final ShareRepository shareRepository;
     private final AListAliasRepository aliasRepository;
     private final SettingRepository settingRepository;
@@ -86,6 +90,7 @@ public class ShareService {
     private int shareId = 20000;
 
     public ShareService(ObjectMapper objectMapper,
+                        AppProperties appProperties1,
                         ShareRepository shareRepository,
                         AListAliasRepository aliasRepository,
                         SettingRepository settingRepository,
@@ -103,6 +108,7 @@ public class ShareService {
                         RestTemplateBuilder builder,
                         Environment environment) {
         this.objectMapper = objectMapper;
+        this.appProperties = appProperties1;
         this.shareRepository = shareRepository;
         this.aliasRepository = aliasRepository;
         this.settingRepository = settingRepository;
@@ -129,7 +135,7 @@ public class ShareService {
         pikPakService.readPikPak();
         driverAccountService.loadStorages();
 
-        cleanShares();
+        cleanTempShares();
 
         List<Share> list = shareRepository.findAll();
 
@@ -164,16 +170,33 @@ public class ShareService {
         }
     }
 
-    @Scheduled(cron = "0 0 4 * * *")
+    @Scheduled(cron = "0 30 * * * *")
     public void cleanShares() {
-        List<Share> list = shareRepository.findByTempTrue();
+        cleanTempShares();
+        cleanInvalidShares();
+    }
 
-        Instant time = Instant.now().minus(30, ChronoUnit.HOURS);
+    private void cleanTempShares() {
+        List<Share> list = shareRepository.findByTempTrue();
+        Instant time = Instant.now().minus(appProperties.getTempShareExpiration(), ChronoUnit.HOURS);
         for (Share share : list) {
             if (share.isTemp() && share.getTime() != null && share.getTime().isBefore(time)) {
                 log.info("Delete temp share: {} {}", share.getId(), share.getPath());
                 shareRepository.delete(share);
             }
+        }
+    }
+
+    private void cleanInvalidShares() {
+        if (appProperties.isCleanInvalidShares()) {
+            cleanStorages();
+        }
+    }
+
+    @Scheduled(cron = "0 0 */4 * * *")
+    public void validateShares() {
+        if (appProperties.isCleanInvalidShares()) {
+            validateStorages();
         }
     }
 
@@ -449,7 +472,7 @@ public class ShareService {
             for (Share share : list) {
                 try {
                     if (share.getType() == null || share.getType() == 0) {
-                        String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'AliyundriveShare2Open',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','');";
+                        String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'AliyunShare',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\"}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','');";
                         int count = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getShareId(), share.getPassword(), share.getFolderId()));
                         log.info("insert Share {} {}: {}, result: {}", share.getId(), share.getShareId(), getMountPath(share), count);
                     } else if (share.getType() == 1) {
@@ -513,7 +536,7 @@ public class ShareService {
     private void updateAListDriverType() {
         try {
             log.info("update storage driver type");
-            Utils.executeUpdate("update x_storages set driver = 'AliyundriveShare2Open' where driver = 'AliyundriveShare'");
+            Utils.executeUpdate("update x_storages set driver = 'AliyunShare' where driver = 'AliyundriveShare'");
         } catch (Exception e) {
             throw new BadRequestException(e);
         }
@@ -654,6 +677,15 @@ public class ShareService {
     public boolean parseLink(Share share) {
         String url = share.getShareId();
         if (!url.startsWith("http")) {
+            String[] parts = url.split("@");
+            if (parts.length == 3 || (parts.length == 2 && url.endsWith("@"))) {
+                share.setType(Integer.parseInt(parts[0]));
+                share.setShareId(parts[1]);
+                if (parts.length > 2) {
+                    share.setPassword(parts[2]);
+                }
+                return true;
+            }
             return false;
         }
 
@@ -848,7 +880,7 @@ public class ShareService {
         }
         if (StringUtils.isBlank(dto.getPath())) {
             share.setTemp(true);
-            share.setPath("temp/" + share.getShareId());
+            share.setPath("temp/" + share.getType() + "@" + share.getShareId() + "@" + share.getPassword());
         } else {
             share.setPath(dto.getPath());
         }
@@ -857,7 +889,11 @@ public class ShareService {
         if (!shareRepository.existsByPath(path)) {
             create(share);
             if (StringUtils.isNotBlank(share.getError())) {
-                throw new BadRequestException(share.getError());
+                String error = share.getError()
+                        .replace("failed load storage:", "")
+                        .replace("failed init storage:", "")
+                        .trim();
+                throw new BadRequestException(error);
             }
         }
         Site site = siteRepository.findById(1).orElseThrow();
@@ -888,7 +924,7 @@ public class ShareService {
 
             int result = 0;
             if (share.getType() == null || share.getType() == 0) {
-                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'AliyundriveShare2Open',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0,0,0);";
+                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'AliyunShare',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0,0,0);";
                 result = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getShareId(), share.getPassword(), share.getFolderId()));
             } else if (share.getType() == 1) {
                 PikPakAccount account = pikPakAccountRepository.getFirstByMasterTrue().orElseThrow(BadRequestException::new);
@@ -926,6 +962,10 @@ public class ShareService {
 
             String error = enableStorage(share.getId(), token);
             share.setError(error);
+            if (appProperties.isCleanInvalidShares() && invalid(error)) {
+                shareRepository.delete(share);
+                deleteStorage(share.getId(), token);
+            }
         } catch (Exception e) {
             log.warn("", e);
             throw new BadRequestException(e);
@@ -949,7 +989,7 @@ public class ShareService {
 
             int result = 0;
             if (share.getType() == null || share.getType() == 0) {
-                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'AliyundriveShare2Open',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0,0,0);";
+                String sql = "INSERT INTO x_storages VALUES(%d,'%s',0,'AliyunShare',30,'work','{\"share_id\":\"%s\",\"share_pwd\":\"%s\",\"root_folder_id\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\"}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0,0,0);";
                 result = Utils.executeUpdate(String.format(sql, share.getId(), getMountPath(share), share.getShareId(), share.getPassword(), share.getFolderId()));
             } else if (share.getType() == 1) {
                 PikPakAccount account = pikPakAccountRepository.getFirstByMasterTrue().orElseThrow(BadRequestException::new);
@@ -1074,13 +1114,54 @@ public class ShareService {
         log.info("delete storage response: {}", response.getBody());
     }
 
-    public Object listStorages(Pageable pageable) {
+    public JsonNode listStorages(Pageable pageable) {
         aListLocalService.validateAListStatus();
         HttpHeaders headers = new HttpHeaders();
         headers.set(HttpHeaders.AUTHORIZATION, accountService.login());
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(null, headers);
-        ResponseEntity<Object> response = restTemplate.exchange("/api/admin/storage/failed?page=" + pageable.getPageNumber() + "&per_page=" + pageable.getPageSize(), HttpMethod.GET, entity, Object.class);
+        ResponseEntity<JsonNode> response = restTemplate.exchange("/api/admin/storage/failed?page=" + pageable.getPageNumber() + "&per_page=" + pageable.getPageSize(), HttpMethod.GET, entity, JsonNode.class);
         return response.getBody();
+    }
+
+    public void validateStorages() {
+        aListLocalService.validateAListStatus();
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.AUTHORIZATION, accountService.login());
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(null, headers);
+        ResponseEntity<JsonNode> response = restTemplate.exchange("/api/admin/storage/failed", HttpMethod.POST, entity, JsonNode.class);
+    }
+
+    public int cleanStorages() {
+        int count = 0;
+        Pageable pageable = PageRequest.of(1, 500);
+        JsonNode result = listStorages(pageable);
+        JsonNode content = result.get("data").get("content");
+        if (content instanceof ArrayNode) {
+            for (int i = 0; i < content.size(); i++) {
+                JsonNode item = content.get(i);
+                int id = item.get("id").asInt();
+                String status = item.get("status").asText();
+                if (invalid(status)) {
+                    log.warn("delete invalid share: {}", id);
+                    deleteShare(id);
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
+    private static boolean invalid(String status) {
+        if (status == null) {
+            return false;
+        }
+        return status.contains("分享码错误或者分享地址错误")
+                || status.contains("share_link is forbidden")
+                || status.contains("share_link is expired")
+                || status.contains("share_link cannot be found")
+                || status.contains("share_pwd is not valid")
+                || status.contains("获取天翼网盘分享信息为空")
+                || status.contains("分享链接已失效");
     }
 
     public Response reloadStorage(Integer id) {
