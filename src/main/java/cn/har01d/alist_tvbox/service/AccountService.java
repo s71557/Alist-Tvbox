@@ -17,15 +17,16 @@ import cn.har01d.alist_tvbox.model.AListUser;
 import cn.har01d.alist_tvbox.model.LoginRequest;
 import cn.har01d.alist_tvbox.model.LoginResponse;
 import cn.har01d.alist_tvbox.model.UserResponse;
+import cn.har01d.alist_tvbox.storage.AliyundriveOpen;
 import cn.har01d.alist_tvbox.util.Constants;
 import cn.har01d.alist_tvbox.util.IdUtils;
 import cn.har01d.alist_tvbox.util.Utils;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.boot.web.client.RestTemplateBuilder;
-import org.springframework.core.env.Environment;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -54,7 +55,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ScheduledFuture;
-import java.util.stream.Collectors;
 
 import static cn.har01d.alist_tvbox.util.Constants.ACCESS_TOKEN;
 import static cn.har01d.alist_tvbox.util.Constants.ALIST_LOGIN;
@@ -91,9 +91,8 @@ public class AccountService {
     private final TaskScheduler scheduler;
     private final ObjectMapper objectMapper;
     private final JdbcTemplate jdbcTemplate;
-    private final Environment environment;
     private final AppProperties appProperties;
-    private ScheduledFuture scheduledFuture;
+    private ScheduledFuture<?> scheduledFuture;
 
     public AccountService(AccountRepository accountRepository,
                           SettingRepository settingRepository,
@@ -104,8 +103,7 @@ public class AccountService {
                           TaskScheduler scheduler,
                           RestTemplateBuilder builder,
                           ObjectMapper objectMapper,
-                          JdbcTemplate jdbcTemplate,
-                          Environment environment) {
+                          JdbcTemplate jdbcTemplate) {
         this.accountRepository = accountRepository;
         this.settingRepository = settingRepository;
         this.userRepository = userRepository;
@@ -115,7 +113,6 @@ public class AccountService {
         this.scheduler = scheduler;
         this.objectMapper = objectMapper;
         this.jdbcTemplate = jdbcTemplate;
-        this.environment = environment;
         this.aListClient = builder.rootUri("http://localhost:" + (appProperties.isHostmode() ? "5234" : "5244")).build();
         this.restTemplate = builder.build();
     }
@@ -195,7 +192,7 @@ public class AccountService {
         accountRepository.getFirstByMasterTrue().map(Account::getId).ifPresent(id -> {
             int storageId = base + (id - 1) * 2;
             log.info("updateAliAccountId {}", storageId);
-            Utils.executeUpdate("INSERT INTO x_setting_items VALUES('ali_account_id','" + storageId + "','','number','',0,1)");
+            aListLocalService.setSetting("ali_account_id", String.valueOf(storageId), "number");
         });
     }
 
@@ -357,9 +354,9 @@ public class AccountService {
         try {
             String json = account.getOpenToken().split("\\.")[1];
             byte[] bytes = Base64.getDecoder().decode(json);
-            Map<Object, Object> map = objectMapper.readValue(bytes, Map.class);
+            JsonNode map = objectMapper.readTree(bytes);
             log.debug("open token: {}", map);
-            int exp = (int) map.get("exp");
+            int exp = map.get("exp").asInt();
             Instant expireTime = Instant.ofEpochSecond(exp).plus(3, ChronoUnit.DAYS);
             return expireTime.isAfter(Instant.now());
         } catch (Exception e) {
@@ -445,7 +442,8 @@ public class AccountService {
         login.setPassword(settingRepository.findById(ALIST_PASSWORD).map(Setting::getValue).orElse(""));
 
         try {
-            String sql = "";
+            String sql = "INSERT INTO x_users (id,username,password,base_path,role,permission) VALUES (2,'guest','guest_Api789','/',1,256)";
+            Utils.executeUpdate(sql);
             if (login.isEnabled()) {
                 log.info("enable AList login: {}", login.getUsername());
                 if (login.getUsername().equals("guest")) {
@@ -463,7 +461,7 @@ public class AccountService {
                 }
             } else {
                 log.info("enable AList guest");
-                sql = "update x_users set disabled = 0, permission = '368', password = 'guest_Api789' where username = 'guest'";
+                sql = "update x_users set disabled = 0, permission = 368, password = 'guest_Api789' where username = 'guest'";
                 Utils.executeUpdate(sql);
                 sql = "delete from x_users where id = 3";
                 Utils.executeUpdate(sql);
@@ -480,25 +478,27 @@ public class AccountService {
         try {
             for (Account account : list) {
                 try {
+                    int code;
                     int id = base + (account.getId() - 1) * 2;
                     String name = account.getNickname();
                     if (StringUtils.isBlank(name)) {
                         name = String.valueOf(account.getId());
                     }
                     String sql;
-                    if (account.isShowMyAli() || account.isMaster()) {
-                        sql = "INSERT INTO x_storages VALUES(%d,'/\uD83D\uDCC0我的阿里云盘/%s/资源盘',0,'AliyundriveOpen',30,'work','{\"root_folder_id\":\"root\",\"refresh_token\":\"%s\",\"refresh_token2\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\",\"drive_type\":\"resource\",\"account_id\":%d}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','');".formatted(id, name, account.getOpenToken(), account.getRefreshToken(), account.getId());
-                        int code = Utils.executeUpdate(sql);
-                        log.info("add AList storage {} {} {}", id, name, code);
-                        sql = "INSERT INTO x_storages VALUES(%d,'/\uD83D\uDCC0我的阿里云盘/%s/备份盘',0,'AliyundriveOpen',30,'work','{\"root_folder_id\":\"root\",\"refresh_token\":\"%s\",\"refresh_token2\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\",\"drive_type\":\"backup\",\"account_id\":%d}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','');".formatted(id + 1, name, account.getOpenToken(), account.getRefreshToken(), account.getId());
+                    if (account.isShowMyAli() || account.isMaster() || list.size() == 1) {
+                        AliyundriveOpen storage = new AliyundriveOpen(account, "resource");
+                        aListLocalService.saveStorage(storage);
+                        storage = new AliyundriveOpen(account, "backup");
+                        aListLocalService.saveStorage(storage);
                     } else {
                         sql = "DELETE FROM x_storages WHERE id = " + id;
-                        int code = Utils.executeUpdate(sql);
+                        code = Utils.executeUpdate(sql);
                         log.info("remove AList storage {} {} {}", id, name, code);
                         sql = "DELETE FROM x_storages WHERE id = " + (id + 1);
+                        code = Utils.executeUpdate(sql);
+                        log.info("remove AList storage {} {} {}", id, name, code);
                     }
-                    int code = Utils.executeUpdate(sql);
-                    log.info("enableMyAli {} {}", account.isShowMyAli() || account.isMaster(), code);
+                    log.info("enableMyAli {}", account.isShowMyAli() || account.isMaster());
                 } catch (Exception e) {
                     log.warn("", e);
                 }
@@ -781,7 +781,7 @@ public class AccountService {
         if (count == 0) {
             updateTokens();
             int storageId = base + (account.getId() - 1) * 2;
-            Utils.executeUpdate("INSERT INTO x_setting_items VALUES('ali_account_id','" + storageId + "','','number','',1,0)");
+            aListLocalService.setSetting("ali_account_id", String.valueOf(storageId), "number");
             aListLocalService.startAListServer();
         } else if (account.isMaster()) {
             log.info("sync tokens for account {}", account);
@@ -913,7 +913,7 @@ public class AccountService {
             throw new BadRequestException("AList服务启动中");
         }
 
-        String token = status == 2 ? login() : "";
+        String token = status >= 2 ? login() : "";
         HttpHeaders headers = new HttpHeaders();
         headers.set(HttpHeaders.AUTHORIZATION, token);
         Map<String, Object> body = new HashMap<>();
@@ -949,19 +949,12 @@ public class AccountService {
     }
 
     public void showMyAli(Account account) {
-        int storageId = base + (account.getId() - 1) * 2;
         try {
-            String name = account.getNickname();
-            if (StringUtils.isBlank(name)) {
-                name = String.valueOf(account.getId());
-            }
             if (account.isShowMyAli() || account.isMaster()) {
-                String sql = "INSERT INTO x_storages VALUES(%d,'/\uD83D\uDCC0我的阿里云盘/%s/资源盘',0,'AliyundriveOpen',30,'work','{\"root_folder_id\":\"root\",\"refresh_token\":\"%s\",\"refresh_token2\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\",\"drive_type\":\"resource\",\"account_id\":%d}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','',0,0,0);".formatted(storageId, name, account.getOpenToken(), account.getRefreshToken(), account.getId());
-                Utils.executeUpdate(sql);
-                storageId++;
-                sql = "INSERT INTO x_storages VALUES(%d,'/\uD83D\uDCC0我的阿里云盘/%s/备份盘',0,'AliyundriveOpen',30,'work','{\"root_folder_id\":\"root\",\"refresh_token\":\"%s\",\"refresh_token2\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\",\"drive_type\":\"backup\",\"account_id\":%d}','','2023-06-15 12:00:00+00:00',0,'name','ASC','',0,'302_redirect','',0,0,0);".formatted(storageId, name, account.getOpenToken(), account.getRefreshToken(), account.getId());
-                Utils.executeUpdate(sql);
-                log.info("add AList storage {}", name);
+                AliyundriveOpen storage = new AliyundriveOpen(account, "resource");
+                aListLocalService.saveStorage(storage);
+                storage = new AliyundriveOpen(account, "backup");
+                aListLocalService.saveStorage(storage);
             }
         } catch (Exception e) {
             throw new BadRequestException(e);
@@ -974,9 +967,9 @@ public class AccountService {
             throw new BadRequestException("AList服务启动中");
         }
 
-        String token = status == 2 ? login() : "";
+        String token = status >= 2 ? login() : "";
         int storageId = base + (account.getId() - 1) * 2;
-        if (status == 2) {
+        if (status >= 2) {
             deleteStorage(storageId, token);
             deleteStorage(storageId + 1, token);
         }
@@ -987,14 +980,14 @@ public class AccountService {
                 name = String.valueOf(account.getId());
             }
             if (account.isShowMyAli() || account.isMaster()) {
-                String sql = "INSERT INTO x_storages VALUES(%d,'/\uD83D\uDCC0我的阿里云盘/%s/资源盘',0,'AliyundriveOpen',30,'work','{\"root_folder_id\":\"root\",\"refresh_token\":\"%s\",\"refresh_token2\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\",\"drive_type\":\"resource\",\"account_id\":%d}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0,0,0);".formatted(storageId, name, account.getOpenToken(), account.getRefreshToken(), account.getId());
-                int code = Utils.executeUpdate(sql);
-                log.debug("{} {}", code, sql);
-                sql = "INSERT INTO x_storages VALUES(%d,'/\uD83D\uDCC0我的阿里云盘/%s/备份盘',0,'AliyundriveOpen',30,'work','{\"root_folder_id\":\"root\",\"refresh_token\":\"%s\",\"refresh_token2\":\"%s\",\"order_by\":\"name\",\"order_direction\":\"ASC\",\"drive_type\":\"backup\",\"account_id\":%d}','','2023-06-15 12:00:00+00:00',1,'name','ASC','',0,'302_redirect','',0,0,0);".formatted(storageId + 1, name, account.getOpenToken(), account.getRefreshToken(), account.getId());
-                code = Utils.executeUpdate(sql);
-                log.debug("{} {}", code, sql);
+                AliyundriveOpen storage = new AliyundriveOpen(account, "resource");
+                storage.setDisabled(true);
+                aListLocalService.saveStorage(storage);
+                storage = new AliyundriveOpen(account, "backup");
+                storage.setDisabled(true);
+                aListLocalService.saveStorage(storage);
                 log.info("add AList storage {}", name);
-                if (status == 2) {
+                if (status >= 2) {
                     enableStorage(storageId, token);
                     enableStorage(storageId + 1, token);
                 }
