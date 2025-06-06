@@ -74,7 +74,7 @@
             <el-radio label="BAIDU" size="large">百度网盘</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="Cookie" required v-if="form.type=='QUARK'||form.type=='UC'||form.type=='PAN115'">
+        <el-form-item label="Cookie" required v-if="form.type=='QUARK'||form.type=='UC'||form.type=='PAN115'||form.type=='BAIDU'">
           <el-input v-model="form.cookie" type="textarea" :rows="5"/>
           <span v-if="form.type=='QUARK'">
             <a href="https://pan.quark.cn/" target="_blank">夸克网盘</a>
@@ -92,6 +92,11 @@
             <a href="https://115.com/" target="_blank">115云盘</a>
             <span class="hint"></span>
             <el-button type="primary" @click="show115QrCode">扫码获取</el-button>
+          </span>
+
+          <span v-if="form.type=='BAIDU'">
+            <a href="https://pan.baidu.com/disk/main" target="_blank">百度网盘</a>
+            <span class="hint">只需要BDUSS</span>
           </span>
         </el-form-item>
         <el-form-item label="Token" v-if="form.type=='PAN139'" required>
@@ -141,7 +146,7 @@
           />
           <span class="hint">服务端多线程加速</span>
         </el-form-item>
-        <el-form-item label="主账号" v-if="form.type!='OPEN115'&&form.type!='QUARK_TV'&&form.type!='UC_TV'">
+        <el-form-item label="主账号" v-if="!driverRoundRobin&&form.type!='OPEN115'&&form.type!='QUARK_TV'&&form.type!='UC_TV'">
           <el-switch
             v-model="form.master"
             inline-prompt
@@ -150,7 +155,7 @@
           />
           <span class="hint">主账号用来观看分享</span>
         </el-form-item>
-        <span v-if="form.name">完整路径： {{ fullPath(form) }}</span>
+        <span style="margin-left: 72px" v-if="form.name">完整路径： {{ fullPath(form) }}</span>
       </el-form>
       <template #footer>
       <span class="dialog-footer">
@@ -220,6 +225,7 @@ const formVisible = ref(false)
 const dialogVisible = ref(false)
 const qrModel = ref(false)
 const qr115Model = ref(false)
+const driverRoundRobin = ref(false)
 const form = ref({
   id: 0,
   type: 'QUARK',
@@ -454,6 +460,9 @@ const load = () => {
 
 onMounted(() => {
   load()
+  axios.get('/api/settings/driver_round_robin').then(({data}) => {
+    driverRoundRobin.value = data.value === 'true'
+  })
 })
 </script>
 

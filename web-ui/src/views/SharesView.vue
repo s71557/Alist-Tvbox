@@ -164,7 +164,7 @@
           <el-radio :label="6" size="large">移动分享</el-radio>
           <el-radio :label="2" size="large">迅雷分享</el-radio>
           <el-radio :label="3" size="large">123分享</el-radio>
-<!--          <el-radio :label="10" size="large">百度分享</el-radio>-->
+          <el-radio :label="10" size="large">百度分享</el-radio>
           <el-radio :label="4" size="large">本地存储</el-radio>
         </el-radio-group>
       </el-form-item>
@@ -211,7 +211,7 @@
     </template>
   </el-dialog>
 
-  <el-dialog v-model="uploadVisible" title="导入分享" width="50%">
+  <el-dialog v-model="uploadVisible" title="导入分享" width="60%">
     <el-form>
       <el-form-item label="类型" label-width="140">
         <el-radio-group v-model="sharesDto.type" class="ml-4">
@@ -225,7 +225,7 @@
           <el-radio :label="6" size="large">移动分享</el-radio>
           <el-radio :label="2" size="large">迅雷分享</el-radio>
           <el-radio :label="3" size="large">123分享</el-radio>
-<!--          <el-radio :label="10" size="large">百度分享</el-radio>-->
+          <el-radio :label="10" size="large">百度分享</el-radio>
         </el-radio-group>
       </el-form-item>
       <el-form-item label="分享内容" label-width="120">
@@ -242,7 +242,7 @@
     </template>
   </el-dialog>
 
-  <el-dialog v-model="exportVisible" title="导出分享" width="50%">
+  <el-dialog v-model="exportVisible" title="导出分享" width="60%">
     <el-form-item label="类型" label-width="140">
       <el-radio-group v-model="form.type" class="ml-4">
         <el-radio :label="-1" size="large">全部</el-radio>
@@ -255,7 +255,7 @@
         <el-radio :label="6" size="large">移动分享</el-radio>
         <el-radio :label="2" size="large">迅雷分享</el-radio>
         <el-radio :label="3" size="large">123分享</el-radio>
-<!--        <el-radio :label="10" size="large">百度分享</el-radio>-->
+        <el-radio :label="10" size="large">百度分享</el-radio>
       </el-radio-group>
     </el-form-item>
     <template #footer>
