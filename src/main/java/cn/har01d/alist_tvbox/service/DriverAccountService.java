@@ -1,6 +1,7 @@
 package cn.har01d.alist_tvbox.service;
 
 import cn.har01d.alist_tvbox.domain.DriverType;
+import cn.har01d.alist_tvbox.dto.AccountInfo;
 import cn.har01d.alist_tvbox.entity.DriverAccount;
 import cn.har01d.alist_tvbox.entity.DriverAccountRepository;
 import cn.har01d.alist_tvbox.entity.PanAccountRepository;
@@ -24,6 +25,7 @@ import cn.har01d.alist_tvbox.storage.UC;
 import cn.har01d.alist_tvbox.storage.UCTV;
 import cn.har01d.alist_tvbox.util.BiliBiliUtils;
 import cn.har01d.alist_tvbox.util.Constants;
+import cn.har01d.alist_tvbox.util.Utils;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -41,6 +43,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -81,6 +84,10 @@ public class DriverAccountService {
         if (!settingRepository.existsByName("migrate_driver_account")) {
             migrateDriverAccounts();
         }
+        if (!settingRepository.existsByName("fix_driver_concurrency")) {
+            fixConcurrency();
+        }
+
 
         String deviceId = settingRepository.findById("quark_device_id").map(Setting::getValue).orElse(null);
         if (deviceId == null) {
@@ -89,6 +96,20 @@ public class DriverAccountService {
         }
         drivers.put("QUARK_TV", new QuarkUCTV(restTemplate, new QuarkUCTV.Conf("https://open-api-drive.quark.cn", "d3194e61504e493eb6222857bccfed94", "kw2dvtd7p4t3pjl2d9ed9yc8yej8kw2d", "1.5.6", "CP", "http://api.extscreen.com/quarkdrive", deviceId)));
         drivers.put("UC_TV", new QuarkUCTV(restTemplate, new QuarkUCTV.Conf("https://open-api-drive.uc.cn", "5acf882d27b74502b7040b0c65519aa7", "l3srvtd7p42l0d0x1u8d7yc8ye9kki4d", "1.6.5", "UCTVOFFICIALWEB", "http://api.extscreen.com/ucdrive", deviceId)));
+    }
+
+    private void fixConcurrency() {
+        List<DriverAccount> accounts = driverAccountRepository.findAll();
+        for (DriverAccount account : accounts) {
+            switch (account.getType()) {
+                case PAN115, OPEN115, BAIDU -> account.setConcurrency(2);
+                case UC, UC_TV -> account.setConcurrency(8);
+                case QUARK, QUARK_TV -> account.setConcurrency(10);
+                default -> account.setConcurrency(1);
+            }
+        }
+        driverAccountRepository.saveAll(accounts);
+        settingRepository.save(new Setting("fix_driver_concurrency", ""));
     }
 
     private void migrateDriverAccounts() {
@@ -156,7 +177,9 @@ public class DriverAccountService {
             if (account.isMaster()) {
                 updateMasterToken(account, false);
             }
-            saveStorage(account, false);
+            if (!account.isDisabled()) {
+                saveStorage(account, false);
+            }
         }
     }
 
@@ -201,6 +224,10 @@ public class DriverAccountService {
         return driverAccountRepository.findById(id).orElseThrow(NotFoundException::new);
     }
 
+    public long countByType(DriverType type) {
+        return driverAccountRepository.countByType(type);
+    }
+
     public DriverAccount create(DriverAccount account) {
         validate(account);
         if (driverAccountRepository.existsByNameAndType(account.getName(), account.getType())) {
@@ -243,6 +270,7 @@ public class DriverAccountService {
 
         boolean changed = account.isMaster() != dto.isMaster()
                 || account.isUseProxy() != dto.isUseProxy()
+                || account.isDisabled() != dto.isDisabled()
                 || !account.getType().equals(dto.getType())
                 || !account.getToken().equals(dto.getToken())
                 || !account.getCookie().equals(dto.getCookie())
@@ -251,6 +279,7 @@ public class DriverAccountService {
 
         account.setMaster(dto.isMaster());
         account.setUseProxy(dto.isUseProxy());
+        account.setDisabled(dto.isDisabled());
         account.setName(dto.getName());
         account.setType(dto.getType());
         account.setCookie(dto.getCookie());
@@ -259,6 +288,7 @@ public class DriverAccountService {
         account.setPassword(dto.getPassword());
         account.setSafePassword(dto.getSafePassword());
         account.setFolder(dto.getFolder());
+        account.setConcurrency(dto.getConcurrency());
 
         if (driverAccountRepository.countByType(account.getType()) <= 1) {
             account.setMaster(true);
@@ -368,10 +398,14 @@ public class DriverAccountService {
             String token = status >= 2 ? accountService.login() : "";
             if (status >= 2) {
                 accountService.deleteStorage(id, token);
+            } else {
+                Utils.executeUpdate("DELETE FROM x_storages WHERE id = " + id);
             }
-            saveStorage(account, true);
-            if (status >= 2) {
-                accountService.enableStorage(id, token);
+            if (!account.isDisabled()) {
+                saveStorage(account, true);
+                if (status >= 2) {
+                    accountService.enableStorage(id, token);
+                }
             }
         } catch (Exception e) {
             throw new BadRequestException(e);
@@ -414,7 +448,7 @@ public class DriverAccountService {
         return res;
     }
 
-    public String getRefreshToken(String type, String queryToken) {
+    public AccountInfo getRefreshToken(String type, String queryToken) {
         if (DriverType.QUARK.name().equals(type)) {
             return getQuarkCookie(queryToken);
         }
@@ -426,10 +460,13 @@ public class DriverAccountService {
             throw new BadRequestException("不支持的类型");
         }
         String code = driver.getCode(queryToken);
-        return driver.getRefreshToken(code);
+        String token = driver.getRefreshToken(code);
+        var info = new AccountInfo();
+        info.setToken(token);
+        return info;
     }
 
-    private String getQuarkCookie(String token) {
+    private AccountInfo getQuarkCookie(String token) {
         long t = System.currentTimeMillis();
         var json = restTemplate.getForObject("https://uop.quark.cn/cas/ajax/getServiceTicketByQrcodeToken?client_id=532&v=1.2&token={token}&request_id={reqId}", ObjectNode.class, token, t);
         log.debug("getServiceTicketByQrcodeToken: {}", json);
@@ -439,6 +476,8 @@ public class DriverAccountService {
             String ticket = json.get("data").get("members").get("service_ticket").asText();
             var res = restTemplate.getForEntity("https://pan.quark.cn/account/info?st={st}&lw=scan", ObjectNode.class, ticket);
             log.debug("account info: {}", res.getBody());
+            var info = new AccountInfo();
+            info.setName(res.getBody().get("data").get("nickname").asText());
             List<String> cookies = new ArrayList<>(res.getHeaders().get(HttpHeaders.SET_COOKIE));
             String cookie = cookiesToString(cookies);
             HttpHeaders headers = new HttpHeaders();
@@ -450,8 +489,9 @@ public class DriverAccountService {
             log.debug("config: {}", res.getBody());
             cookies.addAll(res.getHeaders().get(HttpHeaders.SET_COOKIE));
             cookie = cookiesToString(cookies);
-            log.debug("cookie: {}", cookie);
-            return cookie;
+            info.setCookie(cookie);
+            log.debug("info: {}", info);
+            return info;
         } else if (status == 50004002) {
             log.warn("{} {}", status, message);
             throw new BadRequestException("二维码无效或已过期！");
@@ -462,7 +502,7 @@ public class DriverAccountService {
         throw new BadRequestException("未知错误： " + message);
     }
 
-    private String getUcCookie(String token) {
+    private AccountInfo getUcCookie(String token) {
         long t = System.currentTimeMillis();
         var json = restTemplate.getForObject("https://api.open.uc.cn/cas/ajax/getServiceTicketByQrcodeToken?token={token}&__t={t}&client_id=381&v=1.2&request_id={t}", ObjectNode.class, token, t, t);
         log.debug("getServiceTicketByQrcodeToken: {}", json);
@@ -472,6 +512,9 @@ public class DriverAccountService {
             String ticket = json.get("data").get("members").get("service_ticket").asText();
             var res = restTemplate.getForEntity("https://drive.uc.cn/account/info?st={st}", ObjectNode.class, ticket);
             log.debug("account info: {}", res.getBody());
+            var info = new AccountInfo();
+            info.setName(res.getBody().get("data").get("nickname").asText());
+            info.setId(String.valueOf(res.getBody().get("data").get("uid").asLong()));
             List<String> cookies = new ArrayList<>(res.getHeaders().get(HttpHeaders.SET_COOKIE));
             String cookie = cookiesToString(cookies);
             HttpHeaders headers = new HttpHeaders();
@@ -483,8 +526,9 @@ public class DriverAccountService {
             log.debug("config: {}", res.getBody());
             cookies.addAll(res.getHeaders().get(HttpHeaders.SET_COOKIE));
             cookie = cookiesToString(cookies);
-            log.debug("cookie: {}", cookie);
-            return cookie;
+            info.setCookie(cookie);
+            log.debug("info: {}", info);
+            return info;
         } else if (status == 50004002) {
             log.warn("{} {}", status, message);
             throw new BadRequestException("二维码无效或已过期！");
@@ -505,5 +549,90 @@ public class DriverAccountService {
         }
 
         return String.join("; ", cookieValues);
+    }
+
+    public AccountInfo getInfo(DriverAccount account) {
+        return switch (account.getType()) {
+            case BAIDU -> getBaiduUserInfo(account);
+            case PAN115 -> get115UserInfo(account);
+            case QUARK -> getQuarkUserInfo(account);
+            case UC -> getUcUserInfo(account);
+            default -> null;
+        };
+    }
+
+    private AccountInfo getBaiduUserInfo(DriverAccount account) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.COOKIE, account.getCookie().trim());
+        headers.set(HttpHeaders.REFERER, "https://pan.baidu.com/disk/main");
+        headers.set(HttpHeaders.USER_AGENT, "netdisk");
+        HttpEntity<Void> entity = new HttpEntity<>(null, headers);
+        String url = "https://pan.baidu.com/rest/2.0/membership/user/info?method=query&clienttype=0&app_id=250528&web=1&dp-logid=36187900205107340023";
+        var json = restTemplate.exchange(url, HttpMethod.GET, entity, ObjectNode.class).getBody();
+        var info = new AccountInfo();
+        info.setName(json.get("user_info").get("username").asText());
+        info.setId(String.valueOf(json.get("user_info").get("uk").asLong()));
+        if (json.get("user_info").get("is_svip").asInt() > 0) {
+            info.setVip("SVIP");
+        } else if (json.get("user_info").get("is_vip").asInt() > 0) {
+            info.setVip("VIP");
+        }
+        return info;
+    }
+
+    private AccountInfo get115UserInfo(DriverAccount account) {
+        var pattern = Pattern.compile("UID=(\\d+)");
+        var matcher = pattern.matcher(account.getCookie());
+        if (!matcher.find()) {
+            return null;
+        }
+        String uid = matcher.group(1);
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.COOKIE, account.getCookie().trim());
+        headers.set(HttpHeaders.REFERER, "https://115.com/");
+        headers.set(HttpHeaders.USER_AGENT, Constants.USER_AGENT);
+        HttpEntity<Void> entity = new HttpEntity<>(null, headers);
+        String url = "https://my.115.com/proapi/3.0/index.php?method=user_info&uid=" + uid;
+        var json = restTemplate.exchange(url, HttpMethod.GET, entity, ObjectNode.class).getBody();
+        var info = new AccountInfo();
+        info.setName(json.get("data").get("user_name").asText());
+        info.setId(uid);
+        info.setVip(String.valueOf(json.get("data").get("is_vip").asInt()));
+        return info;
+    }
+
+    private AccountInfo getQuarkUserInfo(DriverAccount account) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.COOKIE, account.getCookie().trim());
+        headers.set(HttpHeaders.REFERER, "https://pan.quark.cn/");
+        headers.set(HttpHeaders.USER_AGENT, Constants.QUARK_USER_AGENT);
+        HttpEntity<Void> entity = new HttpEntity<>(null, headers);
+        String url = "https://drive-pc.quark.cn/1/clouddrive/member?pr=ucpro&fr=pc&uc_param_str=&fetch_subscribe=true&_ch=home&fetch_identity=true";
+        var json = restTemplate.exchange(url, HttpMethod.GET, entity, ObjectNode.class).getBody();
+        var info = new AccountInfo();
+        info.setVip(json.get("data").get("member_type").asText());
+
+        url = "https://pan.quark.cn/account/info?fr=pc&platform=pc";
+        json = restTemplate.exchange(url, HttpMethod.GET, entity, ObjectNode.class).getBody();
+        info.setName(json.get("data").get("nickname").asText());
+        return info;
+    }
+
+    private AccountInfo getUcUserInfo(DriverAccount account) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.COOKIE, account.getCookie().trim());
+        headers.set(HttpHeaders.REFERER, "https://drive.uc.cn/");
+        headers.set(HttpHeaders.USER_AGENT, Constants.USER_AGENT);
+        HttpEntity<Void> entity = new HttpEntity<>(null, headers);
+        String url = "https://pc-api.uc.cn/1/clouddrive/member?pr=UCBrowser&fr=pc&fetch_subscribe=true&_ch=home";
+        var json = restTemplate.exchange(url, HttpMethod.GET, entity, ObjectNode.class).getBody();
+        var info = new AccountInfo();
+        info.setVip(json.get("data").get("member_type").asText());
+
+        url = "https://drive.uc.cn/account/info?fr=pc&platform=pc";
+        json = restTemplate.exchange(url, HttpMethod.GET, entity, ObjectNode.class).getBody();
+        info.setId(String.valueOf(json.get("data").get("uid").asLong()));
+        info.setName(json.get("data").get("nickname").asText());
+        return info;
     }
 }

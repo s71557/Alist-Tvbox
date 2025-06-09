@@ -135,7 +135,7 @@
       </el-row>
     </el-dialog>
 
-    <el-dialog class="player" v-model="dialogVisible" :fullscreen="true" top="0" width="70%" :show-close="false" @opened="start" @close="stop">
+    <el-dialog class="player" v-model="dialogVisible" :fullscreen="true" :show-close="false" @opened="start" @close="stop">
       <template #header="{ close, titleId, titleClass }">
         <div class="my-header">
           <h5 :id="titleId" :class="titleClass">{{ title }}</h5>
@@ -504,9 +504,9 @@ const options = [
   {label: '115', value: '8'},
   {label: '123', value: '3'},
   {label: '天翼', value: '9'},
+  {label: '百度', value: '10'},
   {label: '迅雷', value: '2'},
   {label: '移动', value: '6'},
-  {label: '百度', value: '10'},
   {label: 'PikPak', value: '1'},
 ]
 
@@ -1354,7 +1354,7 @@ const showPrevImage = () => {
 
 onMounted(async () => {
   axios.get('/api/token').then(({data}) => {
-    token.value = data ? '/' + (data + '').split(',')[0] : ''
+    token.value = data.enabledToken ? "/" + data.token.split(",")[0] : ""
     if (Array.isArray(route.params.path)) {
       const path = route.params.path.join('/')
       loadFiles('/' + path)

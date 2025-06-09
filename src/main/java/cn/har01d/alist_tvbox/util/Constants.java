@@ -26,9 +26,7 @@ public final class Constants {
     public static final String COLLECTION = "collection";
     public static final String LIST = "list";
 
-    public static final String DB_URL = "jdbc:sqlite:/opt/alist/data/data.db";
-
-    public static String TG_CHANNELS = "xx123pan1,xunleiyunpan,tgsearchers2,leoziyuan,zyzhpd123,xx123pan,tianyirigeng,tyypzhpd,cloudtianyi,kuakeclound,clouddriveresources,NewQuark,Channel_Shares_115,dianyingshare,XiangxiuNB,zaihuayun,Quark_Movies,vip115hot,yunpanshare,shareAliyun,alyp_1,yunpan139";
+    public static String TG_CHANNELS = "BaiduCloudDisk,xx123pan1,xunleiyunpan,tgsearchers2,leoziyuan,zyzhpd123,xx123pan,tianyirigeng,tyypzhpd,cloudtianyi,kuakeclound,clouddriveresources,NewQuark,Channel_Shares_115,dianyingshare,XiangxiuNB,zaihuayun,Quark_Movies,vip115hot,yunpanshare,shareAliyun,alyp_1,yunpan139";
     public static String TG_WEB_CHANNELS = "tgsearchers2,leoziyuan,zyzhpd123,xx123pan,tianyirigeng,tyypzhpd,cloudtianyi,kuakeclound,clouddriveresources,NewQuark,Channel_Shares_115,dianyingshare,XiangxiuNB,zaihuayun,Quark_Movies,vip115hot,shareAliyun,alyp_1";
 
     public static final String ACCESS_TOKEN = "access_token";
@@ -52,6 +50,7 @@ public final class Constants {
     public static final String MOVIE_VERSION = "movie_version";
     public static final String OPEN_TOKEN_URL = "open_token_url";
     public static final String TOKEN = "token";
+    public static final String ENABLED_TOKEN = "enabled_token";
     public static final String INDEX_VERSION = "index_version";
     public static final String DOCKER_VERSION = "docker_version";
     public static final String APP_VERSION = "app_version";

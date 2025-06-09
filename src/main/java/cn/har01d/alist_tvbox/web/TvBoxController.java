@@ -5,9 +5,7 @@ import cn.har01d.alist_tvbox.service.SubscriptionService;
 import cn.har01d.alist_tvbox.service.TvBoxService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -101,18 +99,13 @@ public class TvBoxController {
     }
 
     @GetMapping("/api/token")
-    public String getToken() {
+    public TokenDto getToken() {
         return subscriptionService.getTokens();
     }
 
     @PostMapping("/api/token")
-    public String createToken(@RequestBody TokenDto dto) {
-        return subscriptionService.createToken(dto);
-    }
-
-    @DeleteMapping("/api/token")
-    public void deleteToken() {
-        subscriptionService.deleteToken();
+    public TokenDto updateToken(@RequestBody TokenDto dto) {
+        return subscriptionService.updateToken(dto);
     }
 
     @GetMapping("/sub/{id}")
