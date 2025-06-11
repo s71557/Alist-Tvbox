@@ -1,57 +1,5 @@
 package cn.har01d.alist_tvbox.service;
 
-import static cn.har01d.alist_tvbox.util.Constants.ACCESS_TOKEN;
-import static cn.har01d.alist_tvbox.util.Constants.ALIST_LOGIN;
-import static cn.har01d.alist_tvbox.util.Constants.ALIST_PASSWORD;
-import static cn.har01d.alist_tvbox.util.Constants.ALIST_USERNAME;
-import static cn.har01d.alist_tvbox.util.Constants.ALI_SECRET;
-import static cn.har01d.alist_tvbox.util.Constants.ATV_PASSWORD;
-import static cn.har01d.alist_tvbox.util.Constants.AUTO_CHECKIN;
-import static cn.har01d.alist_tvbox.util.Constants.CHECKIN_DAYS;
-import static cn.har01d.alist_tvbox.util.Constants.CHECKIN_TIME;
-import static cn.har01d.alist_tvbox.util.Constants.FOLDER_ID;
-import static cn.har01d.alist_tvbox.util.Constants.OPEN_TOKEN;
-import static cn.har01d.alist_tvbox.util.Constants.OPEN_TOKEN_TIME;
-import static cn.har01d.alist_tvbox.util.Constants.OPEN_TOKEN_URL;
-import static cn.har01d.alist_tvbox.util.Constants.REFRESH_TOKEN;
-import static cn.har01d.alist_tvbox.util.Constants.REFRESH_TOKEN_TIME;
-import static cn.har01d.alist_tvbox.util.Constants.SCHEDULE_TIME;
-import static cn.har01d.alist_tvbox.util.Constants.SHOW_MY_ALI;
-import static cn.har01d.alist_tvbox.util.Constants.ZONE_ID;
-
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalTime;
-import java.time.OffsetDateTime;
-import java.time.ZoneId;
-import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.UUID;
-import java.util.concurrent.ScheduledFuture;
-
-import org.apache.commons.lang3.StringUtils;
-import org.springframework.boot.web.client.RestTemplateBuilder;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.scheduling.TaskScheduler;
-import org.springframework.scheduling.support.CronTrigger;
-import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import cn.har01d.alist_tvbox.config.AppProperties;
 import cn.har01d.alist_tvbox.dto.AListLogin;
 import cn.har01d.alist_tvbox.dto.AccountDto;
@@ -73,15 +21,65 @@ import cn.har01d.alist_tvbox.storage.AliyundriveOpen;
 import cn.har01d.alist_tvbox.util.Constants;
 import cn.har01d.alist_tvbox.util.IdUtils;
 import cn.har01d.alist_tvbox.util.Utils;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.TaskScheduler;
+import org.springframework.scheduling.support.CronTrigger;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.ScheduledFuture;
+
+import static cn.har01d.alist_tvbox.util.Constants.ACCESS_TOKEN;
+import static cn.har01d.alist_tvbox.util.Constants.ALIST_LOGIN;
+import static cn.har01d.alist_tvbox.util.Constants.ALIST_PASSWORD;
+import static cn.har01d.alist_tvbox.util.Constants.ALIST_USERNAME;
+import static cn.har01d.alist_tvbox.util.Constants.ALI_SECRET;
+import static cn.har01d.alist_tvbox.util.Constants.ATV_PASSWORD;
+import static cn.har01d.alist_tvbox.util.Constants.AUTO_CHECKIN;
+import static cn.har01d.alist_tvbox.util.Constants.CHECKIN_DAYS;
+import static cn.har01d.alist_tvbox.util.Constants.CHECKIN_TIME;
+import static cn.har01d.alist_tvbox.util.Constants.FOLDER_ID;
+import static cn.har01d.alist_tvbox.util.Constants.OPEN_TOKEN;
+import static cn.har01d.alist_tvbox.util.Constants.OPEN_TOKEN_TIME;
+import static cn.har01d.alist_tvbox.util.Constants.OPEN_TOKEN_URL;
+import static cn.har01d.alist_tvbox.util.Constants.REFRESH_TOKEN;
+import static cn.har01d.alist_tvbox.util.Constants.REFRESH_TOKEN_TIME;
+import static cn.har01d.alist_tvbox.util.Constants.SCHEDULE_TIME;
+import static cn.har01d.alist_tvbox.util.Constants.SHOW_MY_ALI;
+import static cn.har01d.alist_tvbox.util.Constants.ZONE_ID;
 
 @Slf4j
 @Service
 
 public class AccountService {
     public static final ZoneOffset ZONE_OFFSET = ZoneOffset.of("+08:00");
-    private final int base = 4600;
+    public static final int IDX = 4600;
     private final AccountRepository accountRepository;
     private final SettingRepository settingRepository;
     private final UserRepository userRepository;
@@ -203,7 +201,7 @@ public class AccountService {
 
     private void updateAliAccountId() {
         accountRepository.getFirstByMasterTrue().map(Account::getId).ifPresent(id -> {
-            int storageId = base + (id - 1) * 2;
+            int storageId = IDX + (id - 1) * 2;
             log.info("updateAliAccountId {}", storageId);
             aListLocalService.setSetting("ali_account_id", String.valueOf(storageId), "number");
         });
@@ -492,7 +490,7 @@ public class AccountService {
             for (Account account : list) {
                 try {
                     int code;
-                    int id = base + (account.getId() - 1) * 2;
+                    int id = IDX + (account.getId() - 1) * 2;
                     String name = account.getNickname();
                     if (StringUtils.isBlank(name)) {
                         name = String.valueOf(account.getId());
@@ -784,6 +782,7 @@ public class AccountService {
         account.setAutoCheckin(dto.isAutoCheckin());
         account.setShowMyAli(dto.isShowMyAli());
         account.setClean(dto.isClean());
+        account.setUseProxy(dto.isUseProxy());
 
         account.setMaster(dto.isMaster() || count == 0);
         if (account.isMaster()) {
@@ -793,7 +792,7 @@ public class AccountService {
 
         if (count == 0) {
             updateTokens();
-            int storageId = base + (account.getId() - 1) * 2;
+            int storageId = IDX + (account.getId() - 1) * 2;
             aListLocalService.setSetting("ali_account_id", String.valueOf(storageId), "number");
             aListLocalService.startAListServer();
         } else if (account.isMaster()) {
@@ -898,6 +897,7 @@ public class AccountService {
         account.setShowMyAli(dto.isShowMyAli());
         account.setMaster(dto.isMaster());
         account.setClean(dto.isClean());
+        account.setUseProxy(dto.isUseProxy());
 
         if (changed && account.isMaster()) {
             updateMaster(account);
@@ -919,7 +919,7 @@ public class AccountService {
     }
 
     private void updateAliAccountByApi(Account account) {
-        int storageId = base + (account.getId() - 1) * 2;
+        int storageId = IDX + (account.getId() - 1) * 2;
         int status = aListLocalService.checkStatus();
         if (status == 1) {
             Utils.executeUpdate("UPDATE x_setting_items SET value=" + storageId + " WHERE key = 'ali_account_id'");
@@ -981,7 +981,7 @@ public class AccountService {
         }
 
         String token = status >= 2 ? login() : "";
-        int storageId = base + (account.getId() - 1) * 2;
+        int storageId = IDX + (account.getId() - 1) * 2;
         if (status == 0) {
             Utils.executeUpdate("DELETE FROM x_storages WHERE id = " + storageId);
             Utils.executeUpdate("DELETE FROM x_storages WHERE id = " + (storageId + 1));

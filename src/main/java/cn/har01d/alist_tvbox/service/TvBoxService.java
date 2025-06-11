@@ -810,6 +810,9 @@ public class TvBoxService {
             if (path.startsWith("/\uD83C\uDFF7\uFE0F我的115分享/")) {
                 path = path.replace("/\uD83C\uDFF7\uFE0F我的115分享/", "/我的115分享/");
             }
+            if (path.startsWith("/\uD83C\uDFF7\uFE0F 我的115分享/")) {
+                path = path.replace("/\uD83C\uDFF7\uFE0F 我的115分享/", "/我的115分享/");
+            }
             if (StringUtils.isNotBlank(site.getFolder()) && !"/".equals(site.getFolder())) {
                 if (path.startsWith(site.getFolder())) {
                     path = path.substring(site.getFolder().length());
@@ -1355,51 +1358,33 @@ public class TvBoxService {
 
         result.put("url", url);
 
-        if (fsDetail.getProvider().equals("QuarkShare") || fsDetail.getProvider().equals("Quark")) {
-            DriverAccount account = getDriverAccount(url, DriverType.QUARK);
-            if (account == null || account.isUseProxy()) {
-                url = buildAListProxyUrl(site, path, fsDetail.getSign());
-                result.put("url", url);
-            } else {
-                String cookie = account.getCookie();
-                result.put("header", "{\"Cookie\":\"" + cookie + "\",\"User-Agent\":\"" + Constants.QUARK_USER_AGENT + "\",\"Referer\":\"https://pan.quark.cn\"}");
-            }
+        if (isUseProxy(url)) {
+            url = buildAListProxyUrl(site, path, fsDetail.getSign());
+            result.put("url", url);
+        } else if (fsDetail.getProvider().equals("QuarkShare") || fsDetail.getProvider().equals("Quark")) {
+            var account = getDriverAccount(url, DriverType.QUARK);
+            String cookie = account.getCookie();
+            result.put("header", Map.of("Cookie", cookie, "User-Agent", Constants.QUARK_USER_AGENT, "Referer", "https://pan.quark.cn"));
         } else if (fsDetail.getProvider().equals("UCShare") || fsDetail.getProvider().equals("UC")) {
-            DriverAccount account = getDriverAccount(url, DriverType.UC);
-            if (account == null || account.isUseProxy()) {
-                url = buildAListProxyUrl(site, path, fsDetail.getSign());
-                result.put("url", url);
-            } else {
-                String cookie = account.getCookie();
-                result.put("header", "{\"Cookie\":\"" + cookie + "\",\"User-Agent\":\"" + Constants.UC_USER_AGENT + "\",\"Referer\":\"https://drive.uc.cn\"}");
-            }
+            var account = getDriverAccount(url, DriverType.UC);
+            String cookie = account.getCookie();
+            result.put("header", Map.of("Cookie", cookie, "User-Agent", Constants.UC_USER_AGENT, "Referer", "https://drive.uc.cn"));
         } else if (url.contains("xunlei.com")) {
-            result.put("header", "{\"User-Agent\":\"AndroidDownloadManager/13 (Linux; U; Android 13; M2004J7AC Build/SP1A.210812.016)\"}");
+            result.put("header", Map.of("User-Agent", "AndroidDownloadManager/13 (Linux; U; Android 13; M2004J7AC Build/SP1A.210812.016)"));
         } else if (url.contains("115cdn.net")) {
-            DriverAccount account = getDriverAccount(url, DriverType.PAN115);
-            if (account == null || account.isUseProxy()) {
-                url = buildAListProxyUrl(site, path, fsDetail.getSign());
-                result.put("url", url);
-            } else {
-                String cookie = account.getCookie();
-                // 115会把UA生成签名校验
-                result.put("header", "{\"Cookie\":\"" + cookie + "\",\"User-Agent\":\"" + Constants.USER_AGENT + "\",\"Referer\":\"https://115.com/\"}");
-            }
+            var account = getDriverAccount(url, DriverType.PAN115);
+            String cookie = account.getCookie();
+            // 115会把UA生成签名校验
+            result.put("header", Map.of("Cookie", cookie, "User-Agent", Constants.USER_AGENT, "Referer", "https://115.com/"));
         } else if (fsDetail.getProvider().contains("Baidu")) {
-            DriverAccount account = getDriverAccount(url, DriverType.BAIDU);
-            if (account == null || account.isUseProxy()) {
-                url = buildAListProxyUrl(site, path, fsDetail.getSign());
-                result.put("url", url);
-            } else {
-                result.put("header", "{\"User-Agent\":\"netdisk\"}");
-            }
+            result.put("header", Map.of("User-Agent", "netdisk"));
         } else if (url.contains("ali")) {
             result.put("format", "application/octet-stream");
-            result.put("header", "{\"User-Agent\":\"" + appProperties.getUserAgent() + "\",\"Referer\":\"" + Constants.ALIPAN + "\",\"origin\":\"" + Constants.ALIPAN + "\"}");
+            result.put("header", Map.of("User-Agent", appProperties.getUserAgent(), "Referer", Constants.ALIPAN, "origin", Constants.ALIPAN));
         }
 
         if (!getSub) {
-            log.debug("getPlayUrl result: {}", result);
+            log.debug("[{}] getPlayUrl result: {}", fsDetail.getProvider(), result);
             return result;
         }
 
@@ -1429,11 +1414,32 @@ public class TvBoxService {
         }
     }
 
+    private boolean isUseProxy(String url) {
+        var driverAccount = getDriverAccount(url);
+        if (driverAccount != null) {
+            return driverAccount.isUseProxy();
+        }
+        var account = getAliAccount(url);
+        if (account != null) {
+            return account.isUseProxy();
+        }
+        return false;
+    }
+
     private DriverAccount getDriverAccount(String url) {
         int index = url.indexOf(Constants.STORAGE_ID_FRAGMENT);
         if (index > 0) {
             int id = Integer.parseInt(url.substring(index + Constants.STORAGE_ID_FRAGMENT.length())) - DriverAccountService.IDX;
             return driverAccountRepository.findById(id).orElse(null);
+        }
+        return null;
+    }
+
+    private Account getAliAccount(String url) {
+        int index = url.indexOf(Constants.STORAGE_ID_FRAGMENT);
+        if (index > 0) {
+            int id = (Integer.parseInt(url.substring(index + Constants.STORAGE_ID_FRAGMENT.length())) - AccountService.IDX) / 2 + 1;
+            return accountRepository.findById(id).orElse(null);
         }
         return null;
     }
@@ -1638,13 +1644,7 @@ public class TvBoxService {
                 movieDetail.setVod_play_url(buildAListProxyUrl(site, path, sign));
                 movieDetail.setType(fsDetail.getType());
             } else {
-                String url = fsDetail.getRawUrl();
-                DriverAccount account = getDriverAccount(url);
-                if (account != null && account.isUseProxy()) {
-                    movieDetail.setVod_play_url(getFilename(fsDetail) + "$" + buildAListProxyUrl(site, path, sign));
-                } else {
-                    movieDetail.setVod_play_url(getFilename(fsDetail) + "$" + url);
-                }
+                movieDetail.setVod_play_url(getFilename(fsDetail) + "$" + buildPlayUrl(site, path));
             }
             String parent = getParent(path);
             if (!"web".equals(ac) && !"gui".equals(ac)) {
