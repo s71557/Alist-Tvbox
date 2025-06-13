@@ -306,10 +306,29 @@ public class DoubanService {
     }
 
     public String getAppRemoteVersion() {
-        try {
-            return restTemplate.getForObject("http://d.har01d.cn/app_version", String.class);
-        } catch (Exception e) {
-            log.warn("", e);
+        if (environment.matchesProfiles("standalone")) {
+            try {
+                return restTemplate.getForObject("http://d.har01d.cn/app.version.txt", String.class);
+            } catch (Exception e) {
+                log.warn("", e);
+            }
+        } else {
+            try {
+                return restTemplate.getForObject("http://d.har01d.cn/app_version", String.class);
+            } catch (Exception e) {
+                log.warn("", e);
+            }
+        }
+        return "";
+    }
+
+    public String getAListRemoteVersion() {
+        if (environment.matchesProfiles("standalone")) {
+            try {
+                return restTemplate.getForObject("http://d.har01d.cn/alist.version.txt", String.class);
+            } catch (Exception e) {
+                log.warn("", e);
+            }
         }
         return "";
     }

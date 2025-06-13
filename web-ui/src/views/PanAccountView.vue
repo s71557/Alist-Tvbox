@@ -20,7 +20,7 @@
           <span v-else-if="scope.row.type=='QUARK_TV'">夸克TV</span>
           <span v-else-if="scope.row.type=='UC_TV'">UC TV</span>
           <span v-else-if="scope.row.type=='PAN115'">115云盘</span>
-          <span v-else-if="scope.row.type=='OPEN115'">115 Open</span>
+          <span v-else-if="scope.row.type=='OPEN115'">115 Open(移除)</span>
           <span v-else-if="scope.row.type=='THUNDER'">迅雷云盘</span>
           <span v-else-if="scope.row.type=='CLOUD189'">天翼云盘</span>
           <span v-else-if="scope.row.type=='PAN139'">移动云盘</span>
@@ -87,7 +87,6 @@
             <el-radio label="QUARK_TV" size="large">夸克TV</el-radio>
             <el-radio label="UC_TV" size="large">UC TV</el-radio>
             <el-radio label="PAN115" size="large">115云盘</el-radio>
-            <el-radio label="OPEN115" size="large">115 Open</el-radio>
             <el-radio label="THUNDER" size="large">迅雷云盘</el-radio>
             <el-radio label="CLOUD189" size="large">天翼云盘</el-radio>
             <el-radio label="PAN139" size="large">移动云盘</el-radio>
@@ -126,22 +125,20 @@
           <div class="hint"></div>
           <a href="https://alist.nn.ci/zh/guide/drivers/139.html" target="_blank">使用说明</a>
         </el-form-item>
-        <el-form-item label="Refresh Token" required v-if="form.type=='OPEN115'">
-          <el-input v-model="form.token"/>
-          <a href="https://alist.nn.ci/zh/tool/115/token" target="_blank">获取刷新令牌</a>
-        </el-form-item>
+<!--        <el-form-item label="Refresh Token" required v-if="form.type=='OPEN115'">-->
+<!--          <el-input v-model="form.token"/>-->
+<!--          <a href="https://alist.nn.ci/zh/tool/115/token" target="_blank">获取刷新令牌</a>-->
+<!--        </el-form-item>-->
         <el-form-item label="Token" v-if="form.type=='PAN115'">
           <el-input v-model="form.token"/>
         </el-form-item>
         <el-form-item label="Token" v-if="form.type=='QUARK_TV'||form.type=='UC_TV'" required>
           <el-input v-model="form.token" type="textarea" :rows="3"/>
-        </el-form-item>
-        <el-form-item label="Token" v-if="form.type=='BAIDU'" required>
-          <el-input v-model="form.token"/>
-          <a href="https://openapi.baidu.com/oauth/2.0/authorize?response_type=code&client_id=iYCeC9g08h5vuP9UqvPHKKSVrKFXGa1v&redirect_uri=https://alist.nn.ci/tool/baidu/callback&scope=basic,netdisk&qrcode=1" target="_blank">获取刷新令牌</a>
-        </el-form-item>
-        <el-form-item v-if="form.type=='QUARK_TV'||form.type=='UC_TV'" required>
           <el-button type="primary" @click="showQrCode">扫码获取</el-button>
+        </el-form-item>
+        <el-form-item label="Access Token" v-if="form.type=='BAIDU'" required>
+          <el-input v-model="form.addition.access_token"/>
+          <el-button type="primary" @click="copyLink">获取认证令牌</el-button>
         </el-form-item>
         <el-form-item label="用户名" v-if="form.type=='THUNDER'||form.type=='CLOUD189'||form.type=='PAN123'" required>
           <el-input v-model="form.username" :placeholder="form.type=='THUNDER'?'+86 12345678900':''"/>
@@ -251,11 +248,13 @@
 </template>
 
 <script setup lang="ts">
-// @ts-nocheck
 import {onMounted, ref} from 'vue'
 import {Check, Close} from '@element-plus/icons-vue'
 import axios from "axios"
 import {ElMessage} from "element-plus";
+import clipBorad from "vue-clipboard3";
+
+let {toClipboard} = clipBorad();
 
 const updateAction = ref(false)
 const dialogTitle = ref('')
@@ -271,7 +270,11 @@ const form = ref({
   name: '',
   cookie: '',
   token: '',
-  addition: {},
+  addition: {
+    page_size: 1000,
+    limit_rate: 2,
+    access_token: '',
+  },
   username: '',
   password: '',
   safePassword: '',
@@ -333,7 +336,11 @@ const handleAdd = () => {
     name: '',
     cookie: '',
     token: '',
-    addition: {},
+    addition: {
+      page_size: 1000,
+      limit_rate: 2,
+      access_token: '',
+    },
     username: '',
     password: '',
     safePassword: '',
@@ -439,8 +446,7 @@ const handleCancel = () => {
 }
 
 const handleConfirm = () => {
-  const data = Object.assign({}, form.value)
-  data.addition = JSON.stringify(form.value.addition)
+  const data = Object.assign({}, form.value, {addition: JSON.stringify(form.value.addition)})
   const url = updateAction.value ? '/api/pan/accounts/' + form.value.id : '/api/pan/accounts'
   axios.post(url, data).then(() => {
     formVisible.value = false
@@ -464,8 +470,7 @@ const getInfo = () => {
   if (!form.value.cookie) {
     return
   }
-  const data = Object.assign({}, form.value)
-  data.addition = JSON.stringify(form.value.addition)
+  const data = Object.assign({}, form.value, {addition: JSON.stringify(form.value.addition)})
   axios.post('/api/pan/accounts/-/info', data).then(({data}) => {
     if (data && data.name) {
       ElMessage.success('Cookie有效：' + data.name)
@@ -475,6 +480,13 @@ const getInfo = () => {
     } else {
       ElMessage.error('Cookie无效')
     }
+  })
+}
+
+const copyLink = () => {
+  const url = 'https://openapi.baidu.com/oauth/2.0/authorize?response_type=token&scope=basic,netdisk&client_id=IlLqBbU3GjQ0t46TRwFateTprHWl39zF&redirect_uri=oob&confirm_login=0'
+  toClipboard(url).then(() => {
+    ElMessage.success('链接已复制，在新页面打开')
   })
 }
 

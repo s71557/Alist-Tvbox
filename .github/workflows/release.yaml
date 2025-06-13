@@ -1,0 +1,69 @@
+name: Release jar and native binary
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Write tag version to file
+        run: |
+          echo "${{ github.ref_name }}" > app.version.txt
+          cat app.version.txt
+
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ./web-ui
+
+      - name: Install npm
+        working-directory: ./web-ui
+        run: npm ci
+
+      - name: Build web UI
+        working-directory: ./web-ui
+        run: npm run build
+
+      - name: Setup GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '17'
+          distribution: 'graalvm'
+          components: 'native-image'
+          native-image-musl: 'true'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: 'maven'
+
+      - name: Build native with Maven
+        run: |
+          mvn -B -Pnative \
+              -Dnative.image.cache=true \
+              -Dnative-image.parallelism=4 \
+              -DskipTests \
+              package
+          chmod +x target/atv
+          cd target
+          tar zcvf atv.tar.gz atv
+          ls -lh
+
+      - name: Create release and upload binary
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/alist-tvbox-1.0.jar
+            target/atv.tar.gz
+
+      - name: Send version
+        env:
+          api: ${{ secrets.VERSION_API }}
+        if: ${{ env.api != '' }}
+        run: |
+          curl -s "${{ env.api }}?type=app&version=${{ github.ref_name }}"

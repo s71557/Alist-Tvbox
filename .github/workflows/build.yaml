@@ -23,6 +23,7 @@ on:
       - 'Dockerfile-native-base'
       - 'Dockerfile-jre'
       - 'scripts/install.sh'
+      - 'scripts/install-service.sh'
       - '.github/workflows/build-base.yaml'
       - '.github/workflows/build-base-new.yaml'
       - '.github/workflows/build-native-dev.yaml'
@@ -30,6 +31,7 @@ on:
       - '.github/workflows/build-dev.yaml'
       - '.github/workflows/build-java.yaml'
       - '.github/workflows/build-v7.yaml'
+      - '.github/workflows/release.yaml'
       - '.github/ISSUE_TEMPLATE/**'
 
 jobs:
@@ -112,7 +114,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Build native with Maven
-        run: mvn -B -Pnative package --file pom.xml
+        run: |
+          mvn -B -Pnative -Dnative.image.cache=true -Dnative-image.parallelism=4 package --file pom.xml
+          chmod a+x target/atv
+          ls -l target
       - name: Build native docker and push
         uses: docker/build-push-action@v4
         with:
@@ -133,19 +138,12 @@ jobs:
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox:native-host
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Send version file
+      - name: Send version
         env:
-          ssh_host: ${{ secrets.SSH_HOST }}
-        if: ${{ env.ssh_host != '' }}
-        uses: appleboy/scp-action@v0.1.4
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          port: 22
-          username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_KEY }}
-          source: "data/app_version,scripts/update_new.sh,scripts/update_xiaoya.sh,scripts/update_hostmode.sh,scripts/update_native.sh,scripts/update_native_host.sh"
-          strip_components: 1
-          target: /var/www/alist/
+          api: ${{ secrets.VERSION_API }}
+        if: ${{ env.api != '' }}
+        run: |
+          curl -s "${{ env.api }}?type=atv&version=${{ github.ref_name }}"
       - name: send telegram message
         uses: appleboy/telegram-action@master
         with:

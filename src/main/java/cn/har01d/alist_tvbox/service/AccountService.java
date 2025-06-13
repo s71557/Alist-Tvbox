@@ -76,7 +76,6 @@ import static cn.har01d.alist_tvbox.util.Constants.ZONE_ID;
 
 @Slf4j
 @Service
-
 public class AccountService {
     public static final ZoneOffset ZONE_OFFSET = ZoneOffset.of("+08:00");
     public static final int IDX = 4600;
@@ -183,8 +182,8 @@ public class AccountService {
         }
 
         try {
-            enableLogin();
             addAdminUser();
+            enableLogin();
         } catch (Exception e) {
             log.warn("", e);
         }
@@ -209,7 +208,9 @@ public class AccountService {
 
     private void addAdminUser() {
         try {
-            String sql = "INSERT INTO x_users (id,username,password,base_path,role,permission) VALUES(4,'atv',\"" + generatePassword() + "\",'/',2,16383)";
+            String sql = "DELETE FROM x_users WHERE username = 'atv'";
+            Utils.executeUpdate(sql);
+            sql = "INSERT INTO x_users (id,username,password,base_path,role,permission) VALUES(4,'atv',\"" + generatePassword() + "\",'/',2,16383)";
             Utils.executeUpdate(sql);
         } catch (Exception e) {
             log.warn("", e);
@@ -440,7 +441,7 @@ public class AccountService {
         body.put("grant_type", REFRESH_TOKEN);
         log.debug("body: {}", body);
         HttpEntity<Map<String, String>> entity = new HttpEntity<>(body, headers);
-        String url = settingRepository.findById(OPEN_TOKEN_URL).map(Setting::getValue).orElse("https://api.xhofe.top/alist/ali_open/token");
+        String url = settingRepository.findById(OPEN_TOKEN_URL).map(Setting::getValue).orElse("https://ali.har01d.org/access_token");
         ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
         log.debug("get open token response: {}", response.getBody());
         return response.getBody();
@@ -783,6 +784,7 @@ public class AccountService {
         account.setShowMyAli(dto.isShowMyAli());
         account.setClean(dto.isClean());
         account.setUseProxy(dto.isUseProxy());
+        account.setConcurrency(dto.getConcurrency());
 
         account.setMaster(dto.isMaster() || count == 0);
         if (account.isMaster()) {
@@ -802,12 +804,8 @@ public class AccountService {
             updateAliAccountByApi(account);
         }
 
-        if (count == 0) {
-            showMyAli(account);
-        } else {
-            showMyAliWithAPI(account);
-        }
         checkin(account, false);
+        showMyAliWithAPI(account);
         return account;
     }
 
@@ -889,7 +887,9 @@ public class AccountService {
         Account account = accountRepository.findById(id).orElseThrow(NotFoundException::new);
         boolean tokenChanged = !Objects.equals(account.getRefreshToken(), dto.getRefreshToken()) || !Objects.equals(account.getOpenToken(), dto.getOpenToken());
         boolean changed = tokenChanged || account.isMaster() != dto.isMaster();
-        boolean showMyAli = account.isShowMyAli();
+        boolean aliChanged = account.isShowMyAli() != dto.isShowMyAli()
+                || account.isUseProxy() != dto.isUseProxy()
+                || !Objects.equals(account.getConcurrency(), dto.getConcurrency());
 
         account.setRefreshToken(dto.getRefreshToken().trim());
         account.setOpenToken(dto.getOpenToken().trim());
@@ -898,13 +898,13 @@ public class AccountService {
         account.setMaster(dto.isMaster());
         account.setClean(dto.isClean());
         account.setUseProxy(dto.isUseProxy());
+        account.setConcurrency(dto.getConcurrency());
 
         if (changed && account.isMaster()) {
             updateMaster(account);
             updateAliAccountByApi(account);
         }
 
-        boolean aliChanged = account.isShowMyAli() != showMyAli;
         if (aliChanged) {
             showMyAliWithAPI(account);
         }
@@ -977,6 +977,7 @@ public class AccountService {
     public void showMyAliWithAPI(Account account) {
         int status = aListLocalService.checkStatus();
         if (status == 1) {
+            showMyAli(account);
             throw new BadRequestException("AList服务启动中");
         }
 
