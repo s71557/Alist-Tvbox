@@ -32,8 +32,6 @@
     <properties>
         <java.version>17</java.version>
         <jjwt.version>0.11.5</jjwt.version>
-        <libc>--libc=musl</libc>
-        <lib.static>--static</lib.static>
     </properties>
 
     <dependencies>
@@ -103,11 +101,13 @@
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp</artifactId>
+            <version>4.12.0</version>
         </dependency>
 
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
+            <version>1.18.38</version>
             <optional>true</optional>
         </dependency>
         <dependency>
@@ -124,6 +124,15 @@
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.14.0</version>
+                <configuration>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
@@ -154,25 +163,6 @@
     </repositories>
 
     <profiles>
-        <profile>
-            <properties>
-                <libc></libc>
-                <lib.static></lib.static>
-            </properties>
-            <id>platform-arm</id>
-            <activation>
-                <os>
-                    <arch>aarch64</arch>
-                </os>
-            </activation>
-        </profile>
-        <profile>
-            <properties>
-                <libc></libc>
-                <lib.static></lib.static>
-            </properties>
-            <id>standalone</id>
-        </profile>
         <profile>
             <id>native</id>
             <build>
@@ -214,13 +204,12 @@
                             <mainClass>cn.har01d.alist_tvbox.AListApplication</mainClass>
                             <buildArgs>
                                 <buildArg>
-                                    ${lib.static}
-                                    ${libc}
-                                    --enable-http
-                                    --enable-https
-                                    -march=compatibility
                                     -H:ResourceConfigurationFiles=resource-config.json
                                 </buildArg>
+                                <buildArg>--enable-http</buildArg>
+                                <buildArg>--enable-https</buildArg>
+                                <buildArg>-march=compatibility</buildArg>
+                                <buildArg>--verbose</buildArg>
                             </buildArgs>
                         </configuration>
                     </plugin>
