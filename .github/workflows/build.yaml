@@ -18,13 +18,17 @@ on:
       - 'pom.xml'
       - 'pom-standalone.xml'
       - 'Dockerfile-v7'
-      - 'Dockerfile'
       - 'Dockerfile-base'
       - 'Dockerfile-base-new'
       - 'Dockerfile-native-base'
       - 'Dockerfile-jre'
       - 'scripts/install.sh'
       - 'scripts/install-service.sh'
+      - 'scripts/update_hostmode.sh'
+      - 'scripts/update_native.sh'
+      - 'scripts/update_native_host.sh'
+      - 'scripts/update_new.sh'
+      - 'scripts/update_xiaoya.sh'
       - '.github/workflows/build-base.yaml'
       - '.github/workflows/build-base-new.yaml'
       - '.github/workflows/build-native-dev.yaml'
@@ -114,6 +118,16 @@ jobs:
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/alist-tvbox:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Build tg docker and push
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: Dockerfile-tg
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/alist-tvbox:tg
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - name: Build native with Maven
         run: |
           mvn -B -Pnative -Dnative.image.cache=true -Dnative-image.parallelism=4 package --file pom.xml
@@ -144,7 +158,7 @@ jobs:
           api: ${{ secrets.VERSION_API }}
         if: ${{ env.api != '' }}
         run: |
-          curl -s "${{ env.api }}?type=atv&version=${{ github.ref_name }}"
+          curl -XPOST -s "${{ env.api }}" -H "Content-Type: application/json" --data-binary @data/version
       - name: send telegram message
         uses: appleboy/telegram-action@master
         with:

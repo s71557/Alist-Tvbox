@@ -40,7 +40,6 @@ import cn.har01d.alist_tvbox.storage.UCShare;
 import cn.har01d.alist_tvbox.storage.UrlTree;
 import cn.har01d.alist_tvbox.util.Utils;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletResponse;
@@ -83,7 +82,6 @@ import static cn.har01d.alist_tvbox.util.Constants.OPEN_TOKEN_URL;
 
 public class ShareService {
 
-    private final ObjectMapper objectMapper;
     private final AppProperties appProperties;
     private final ShareRepository shareRepository;
     private final MetaRepository metaRepository;
@@ -105,8 +103,7 @@ public class ShareService {
     private final int offset = 99900;
     private int shareId = 20000;
 
-    public ShareService(ObjectMapper objectMapper,
-                        AppProperties appProperties1,
+    public ShareService(AppProperties appProperties1,
                         ShareRepository shareRepository,
                         MetaRepository metaRepository,
                         AListAliasRepository aliasRepository,
@@ -124,7 +121,6 @@ public class ShareService {
                         PikPakService pikPakService,
                         RestTemplateBuilder builder,
                         Environment environment) {
-        this.objectMapper = objectMapper;
         this.appProperties = appProperties1;
         this.shareRepository = shareRepository;
         this.metaRepository = metaRepository;
@@ -275,19 +271,6 @@ public class ShareService {
             } catch (Exception e) {
                 log.warn("", e);
             }
-
-            Path path = Path.of(Utils.getAListPath("data/config.json"));
-            if (Files.exists(path)) {
-                String text = Files.readString(path);
-                Map<String, Object> json = objectMapper.readValue(text, Map.class);
-                if (url != null) {
-                    json.put("opentoken_auth_url", url);
-                    text = objectMapper.writeValueAsString(json);
-                    Files.writeString(path, text);
-                } else {
-                    settingRepository.save(new Setting(OPEN_TOKEN_URL, (String) json.get("opentoken_auth_url")));
-                }
-            }
         } catch (Exception e) {
             log.warn("", e);
         }
@@ -295,32 +278,12 @@ public class ShareService {
 
     public void updateOpenTokenUrl(OpenApiDto dto) {
         String url = dto.getUrl();
-        try {
-            Path path = Path.of(Utils.getAListPath("data/config.json"));
-            if (Files.exists(path)) {
-                String text = Files.readString(path);
-                Map<String, Object> json = objectMapper.readValue(text, Map.class);
-                json.put("opentoken_auth_url", url);
-                text = objectMapper.writeValueAsString(json);
-                Files.writeString(path, text);
-            }
-        } catch (Exception e) {
-            log.warn("", e);
-        }
-
-        try {
-            Path file = Utils.getDataPath("open_token_url.txt");
-            Files.writeString(file, url);
-        } catch (Exception e) {
-            log.warn("", e);
-        }
-
         settingRepository.save(new Setting(OPEN_TOKEN_URL, url));
         settingRepository.save(new Setting("open_api_client_id", dto.getClientId() == null ? "" : dto.getClientId().trim()));
         settingRepository.save(new Setting("open_api_client_secret", dto.getClientSecret() == null ? "" : dto.getClientSecret().trim()));
-        Utils.executeUpdate("UPDATE x_setting_items SET value = '" + url + "' WHERE key = 'open_token_url'");
-        Utils.executeUpdate("UPDATE x_setting_items SET value = '" + dto.getClientId().trim() + "' WHERE key = 'open_api_client_id'");
-        Utils.executeUpdate("UPDATE x_setting_items SET value = '" + dto.getClientSecret().trim() + "' WHERE key = 'open_api_client_secret'");
+        aListLocalService.setSetting("open_token_url", url, "string");
+        aListLocalService.setSetting("open_api_client_id", dto.getClientId().trim(), "string");
+        aListLocalService.setSetting("open_api_client_secret", dto.getClientSecret().trim(), "string");
     }
 
     private List<Share> loadSharesFromFile() {
@@ -1087,18 +1050,26 @@ public class ShareService {
 
     public int cleanStorages() {
         int count = 0;
-        Pageable pageable = PageRequest.of(1, 500);
-        JsonNode result = listStorages(pageable);
-        JsonNode content = result.get("data").get("content");
-        if (content instanceof ArrayNode) {
-            for (int i = 0; i < content.size(); i++) {
-                JsonNode item = content.get(i);
-                int id = item.get("id").asInt();
-                String status = item.get("status").asText();
-                if (invalid(status)) {
-                    log.warn("delete invalid share: {}", id);
-                    deleteShare(id);
-                    count++;
+        int size = 500;
+        int retry = 1;
+        while (retry++ < 10) {
+            Pageable pageable = PageRequest.of(1, size);
+            JsonNode result = listStorages(pageable);
+            JsonNode content = result.get("data").get("content");
+            if (content instanceof ArrayNode) {
+                for (int i = 0; i < content.size(); i++) {
+                    JsonNode item = content.get(i);
+                    String status = item.get("status").asText();
+                    if (invalid(status)) {
+                        int id = item.get("id").asInt();
+                        String path = item.get("mount_path").asText();
+                        log.warn("delete invalid share: {} {} reason: {}", id, path, status);
+                        deleteShare(id);
+                        count++;
+                    }
+                }
+                if (content.size() < size) {
+                    break;
                 }
             }
         }
@@ -1112,13 +1083,19 @@ public class ShareService {
         return status.contains("分享码错误或者分享地址错误")
                 || status.contains("share_link is forbidden")
                 || status.contains("share_link is expired")
+                || status.contains("share_link is cancelled by the creator")
                 || status.contains("share_link cannot be found")
                 || status.contains("share_pwd is not valid")
                 || status.contains("guest missing pwd_id or stoken")
                 || status.contains("获取天翼网盘分享信息为空")
+                || status.contains("文件涉及违规内容")
+                || status.contains("分享者用户封禁链接查看受限")
                 || status.contains("链接已失效")
                 || status.contains("分享地址已失效")
+                || status.contains("好友已取消了分享")
                 || status.contains("分享已取消")
+                || status.contains("分享不存在")
+                || status.contains("文件不存在")
                 || status.contains("文件没有被分享")
                 ;
     }
