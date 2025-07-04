@@ -1,28 +1,13 @@
-FROM golang:1.20 AS builder
-
-WORKDIR /app/
-
-COPY atv-cli ./
-
-RUN go build
-
 FROM haroldli/alist-base-new:hostmode
 
 LABEL MAINTAINER="Har01d"
 
 ENV MEM_OPT="-Xmx512M"
 
-COPY config/config-host.json /opt/alist/data/config.json
+COPY config/alist-host.json /alist.json
 
-COPY --from=builder /app/atv-cli /
-
-COPY init.sh /
-COPY scripts/movie.sh /
-COPY scripts/downloadPg.sh /
-COPY scripts/downloadZx.sh /
 COPY entrypoint.sh /
-
-COPY target/application/ ./
+COPY init.sh /
 
 COPY data/tvbox.zip /
 COPY data/index.share.zip /
@@ -32,7 +17,9 @@ COPY data/pg.zip /
 COPY data/zx.zip /
 COPY data/base_version /
 
-COPY data/version data/app_version
+COPY target/application/ ./
+
+COPY data/version /app_version
 
 EXPOSE 4567 5678
 

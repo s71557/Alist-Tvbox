@@ -1,32 +1,17 @@
-FROM golang:1.20 AS builder
-
-WORKDIR /app/
-
-COPY atv-cli ./
-
-RUN go build
-
-FROM haroldli/alist:hostmode
+FROM haroldli/alist-base:hostmode
 
 LABEL MAINTAINER="Har01d"
 
-ENV INSTALL=native-host
-
-VOLUME /opt/atv/data/
+ENV INSTALL=native-host NATIVE=true
 
 WORKDIR /opt/atv/
 
-COPY config/config-host.json /opt/alist/data/config.json
-
-COPY --from=builder /app/atv-cli /
+COPY config/alist-host.json /alist.json
 
 COPY scripts/index.sh /
 
-COPY init.sh /
-COPY scripts/movie.sh /
-COPY scripts/downloadPg.sh /
-COPY scripts/downloadZx.sh /
 COPY entrypoint-native.sh /entrypoint.sh
+COPY init.sh /
 
 COPY data/update.sql /
 COPY data/tvbox.zip /
@@ -37,9 +22,9 @@ COPY data/zx.zip /
 COPY data/data.zip /
 COPY data/base_version /
 
-COPY data/version data/app_version
-
 COPY target/atv ./
+
+COPY data/version /app_version
 
 EXPOSE 4567 5678
 

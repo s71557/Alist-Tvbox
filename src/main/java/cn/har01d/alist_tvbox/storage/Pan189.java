@@ -7,6 +7,7 @@ public class Pan189 extends Storage {
         super(account, "189CloudPC");
         addAddition("username", account.getUsername());
         addAddition("password", account.getPassword());
+        addAddition("cookie", account.getCookie());
         addAddition("validate_code", account.getToken());
         addAddition("root_folder_id", account.getFolder());
         addAddition("order_by", "filename");
@@ -15,6 +16,6 @@ public class Pan189 extends Storage {
         addAddition("upload_method", "stream");
         addAddition("upload_thread", "3");
         addAddition("rapid_upload", true);
-        buildAddition();
+        buildAddition(account);
     }
 }

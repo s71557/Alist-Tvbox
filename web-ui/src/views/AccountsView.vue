@@ -78,6 +78,7 @@
         <el-form-item label="阿里refresh token" required>
           <el-input v-model="form.refreshToken" maxlength="128" placeholder="长度32位" autocomplete="off"/>
           <a href="https://ali.har01d.org/" target="_blank">获取阿里token</a>
+          <a href="https://api.oplist.org/" target="_blank" class="hint">获取阿里token</a>
         </el-form-item>
         <el-form-item label="开放refresh token" required>
           <el-input v-model="form.openToken" type="textarea" rows="3" minlength="256" placeholder="长度280位"
@@ -121,6 +122,9 @@
         <el-form-item label="代理线程数">
           <el-input-number :min="1" :max="16" v-model="form.concurrency"/>
         </el-form-item>
+        <el-form-item label="分片大小">
+          <el-input-number :min="64" :max="4096" v-model="form.chunkSize"/>
+        </el-form-item>
         <el-form-item label="自动签到">
           <el-switch
             v-model="form.autoCheckin"
@@ -160,6 +164,7 @@
         <el-form-item prop="refreshToken" label="阿里refresh token" required>
           <el-input v-model="form.refreshToken" maxlength="128" placeholder="长度32位"/>
           <a href="https://ali.har01d.org/" target="_blank">获取阿里token</a>
+          <a href="https://api.oplist.org/" target="_blank" class="hint">获取阿里token</a>
           <span class="hint">更新时间： {{ formatTime(form.refreshTokenTime) }}</span>
         </el-form-item>
         <el-form-item prop="openToken" label="开放refresh token" required>
@@ -213,6 +218,9 @@
         </el-form-item>
         <el-form-item label="代理线程数">
           <el-input-number :min="1" :max="16" v-model="form.concurrency"/>
+        </el-form-item>
+        <el-form-item label="分片大小">
+          <el-input-number :min="64" :max="4096" v-model="form.chunkSize"/>
         </el-form-item>
         <el-form-item label="上次签到时间" v-if="form.checkinTime">
           <el-input :model-value="formatTime(form.checkinTime)" readonly/>
@@ -326,6 +334,7 @@ const form = ref({
   checkinTime: '',
   checkinDays: 1,
   concurrency: 2,
+  chunkSize: 256,
 })
 
 const formatTime = (value: string | number) => {
@@ -402,6 +411,7 @@ const handleAdd = () => {
     checkinTime: '',
     checkinDays: 1,
     concurrency: 2,
+    chunkSize: 256,
   }
   formVisible.value = true
 }

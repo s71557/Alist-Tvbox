@@ -1,27 +1,5 @@
 package cn.har01d.alist_tvbox.service;
 
-import ch.qos.logback.classic.Level;
-import ch.qos.logback.classic.LoggerContext;
-import cn.har01d.alist_tvbox.config.AppProperties;
-import cn.har01d.alist_tvbox.domain.DriverType;
-import cn.har01d.alist_tvbox.dto.SearchSetting;
-import cn.har01d.alist_tvbox.entity.DriverAccountRepository;
-import cn.har01d.alist_tvbox.entity.Setting;
-import cn.har01d.alist_tvbox.entity.SettingRepository;
-import cn.har01d.alist_tvbox.exception.BadRequestException;
-import cn.har01d.alist_tvbox.util.Constants;
-import cn.har01d.alist_tvbox.util.Utils;
-import jakarta.annotation.PostConstruct;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
-import org.slf4j.LoggerFactory;
-import org.springframework.core.env.Environment;
-import org.springframework.core.io.FileSystemResource;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-import org.springframework.util.CollectionUtils;
-
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -35,6 +13,29 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.zip.ZipOutputStream;
+
+import org.apache.commons.lang3.StringUtils;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.env.Environment;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.LoggerContext;
+import cn.har01d.alist_tvbox.config.AppProperties;
+import cn.har01d.alist_tvbox.domain.DriverType;
+import cn.har01d.alist_tvbox.dto.SearchSetting;
+import cn.har01d.alist_tvbox.entity.DriverAccountRepository;
+import cn.har01d.alist_tvbox.entity.Setting;
+import cn.har01d.alist_tvbox.entity.SettingRepository;
+import cn.har01d.alist_tvbox.exception.BadRequestException;
+import cn.har01d.alist_tvbox.util.Constants;
+import cn.har01d.alist_tvbox.util.Utils;
+import jakarta.annotation.PostConstruct;
+import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Service
@@ -76,6 +77,7 @@ public class SettingService {
         appProperties.setMix(!settingRepository.findById("mix_site_source").map(Setting::getValue).orElse("").equals("false"));
         appProperties.setSearchable(!settingRepository.findById("bilibili_searchable").map(Setting::getValue).orElse("").equals("false"));
         appProperties.setTgSearch(settingRepository.findById("tg_search").map(Setting::getValue).orElse(""));
+        appProperties.setTgSortField(settingRepository.findById("tg_sort_field").map(Setting::getValue).orElse("time"));
         appProperties.setTempShareExpiration(settingRepository.findById("temp_share_expiration").map(Setting::getValue).map(Integer::parseInt).orElse(24));
         appProperties.setQns(settingRepository.findById("bilibili_qn").map(Setting::getValue).map(e -> e.split(",")).map(Arrays::asList).orElse(List.of()));
         settingRepository.findById("debug_log").ifPresent(this::setLogLevel);
@@ -91,6 +93,25 @@ public class SettingService {
             settingRepository.save(new Setting("tg_web_channels", appProperties.getTgWebChannels()));
         } else {
             appProperties.setTgWebChannels(value);
+        }
+        value = settingRepository.findById("tg_drivers").map(Setting::getValue).orElse("");
+        if (StringUtils.isBlank(value)) {
+            settingRepository.save(new Setting("tg_drivers", String.join(",", appProperties.getTgDrivers())));
+        } else {
+            appProperties.setTgDrivers(Arrays.asList(value.split(",")));
+        }
+        value = settingRepository.findById("tgDriverOrder").map(Setting::getValue).orElse("");
+        if (StringUtils.isBlank(value)) {
+            List<String> orders = new ArrayList<>(appProperties.getTgDrivers());
+            for (int i = 0; i < appProperties.getTgDriverOrder().size(); i++) {
+                if (i != 4 && !orders.contains(String.valueOf(i))) {
+                    orders.add(String.valueOf(i));
+                }
+            }
+            appProperties.setTgDriverOrder(orders);
+            settingRepository.save(new Setting("tgDriverOrder", String.join(",", orders)));
+        } else {
+            appProperties.setTgDriverOrder(Arrays.asList(value.split(",")));
         }
         value = settingRepository.findById("tg_timeout").map(Setting::getValue).orElse("");
         if (StringUtils.isBlank(value)) {
@@ -110,7 +131,18 @@ public class SettingService {
             value = UUID.randomUUID().toString();
             settingRepository.save(new Setting("system_id", value));
         }
+        if (!settingRepository.existsById("api_key")) {
+            generateApiKey();
+        }
+        appProperties.setSystemId(value);
         log.info("system id: {}", value);
+    }
+
+    public String generateApiKey() {
+        String apiKey = UUID.randomUUID().toString().replace("-", "");
+        log.debug("generate api key: {}", apiKey);
+        settingRepository.save(new Setting("api_key", apiKey));
+        return apiKey;
     }
 
     public FileSystemResource exportDatabase() throws IOException {
@@ -123,8 +155,12 @@ public class SettingService {
 
     @Scheduled(cron = "0 0 6 * * *")
     public File backupDatabase() {
+        if (environment.matchesProfiles("mysql")) {
+            return null;
+        }
+
         try {
-            jdbcTemplate.execute("SCRIPT TO '/tmp/script.sql' TABLE ACCOUNT, ALIST_ALIAS, CONFIG_FILE, ID_GENERATOR, INDEX_TEMPLATE, NAVIGATION, PIK_PAK_ACCOUNT, SETTING, SHARE, SITE, SUBSCRIPTION, TASK, USERS, TMDB, TMDB_META");
+            jdbcTemplate.execute("SCRIPT TO '/tmp/script.sql' TABLE ACCOUNT, ALIST_ALIAS, CONFIG_FILE, ID_GENERATOR, INDEX_TEMPLATE, NAVIGATION, PIK_PAK_ACCOUNT, SETTING, SHARE, SITE, SUBSCRIPTION, TASK, x_user, TMDB, TMDB_META, DEVICE, DRIVER_ACCOUNT, EMBY, HISTORY, JELLYFIN, PLAY_URL, TENANT");
             File out = Utils.getDataPath("backup", "database-" + LocalDate.now() + ".zip").toFile();
             out.createNewFile();
             try (FileOutputStream fos = new FileOutputStream(out);
@@ -202,6 +238,16 @@ public class SettingService {
         if ("temp_share_expiration".equals(setting.getName())) {
             appProperties.setTempShareExpiration(Integer.parseInt(setting.getValue()));
         }
+        if ("tg_drivers".equals(setting.getName())) {
+            String value = StringUtils.isBlank(setting.getValue()) ? Constants.TG_DRIVERS : setting.getValue();
+            setting.setValue(value);
+            appProperties.setTgDrivers(Arrays.stream(value.split(",")).toList());
+        }
+        if ("tgDriverOrder".equals(setting.getName())) {
+            String value = StringUtils.isBlank(setting.getValue()) ? Constants.TG_DRIVERS : setting.getValue();
+            setting.setValue(value);
+            appProperties.setTgDriverOrder(Arrays.stream(value.split(",")).toList());
+        }
         if ("tg_channels".equals(setting.getName())) {
             String value = StringUtils.isBlank(setting.getValue()) ? Constants.TG_CHANNELS : setting.getValue();
             setting.setValue(value);
@@ -217,6 +263,9 @@ public class SettingService {
         }
         if ("tg_search".equals(setting.getName())) {
             appProperties.setTgSearch(setting.getValue());
+        }
+        if ("tg_sort_field".equals(setting.getName())) {
+            appProperties.setTgSortField(setting.getValue());
         }
         if ("user_agent".equals(setting.getName())) {
             appProperties.setUserAgent(setting.getValue());
@@ -238,9 +287,6 @@ public class SettingService {
         }
         if ("ali_to_115".equals(setting.getName())) {
             aListLocalService.updateSetting("ali_to_115", setting.getValue(), "bool");
-        }
-        if ("delete_code_115".equals(setting.getName())) {
-            aListLocalService.updateSetting("delete_code_115", setting.getValue(), "string");
         }
         return settingRepository.save(setting);
     }

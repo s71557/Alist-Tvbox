@@ -1,5 +1,7 @@
 #!/bin/sh
 
+init_version=$(head -n 1 "/opt/alist/data/.init" 2>/dev/null || echo "")
+
 restore_database() {
   if [ -f "/data/database.zip" ]; then
     echo "=== restore database ==="
@@ -27,10 +29,12 @@ init() {
   cd /www/
   tar zxf mobi.tgz
 
-  [ -f /opt/alist/data/config.json ] || cp /alist.config.json /opt/alist/data/config.json
+  [ -f /opt/alist/data/config.json ] || cp /alist.json /opt/alist/data/config.json
   sed -i 's/127.0.0.1/0.0.0.0/' /opt/alist/data/config.json
 
-  sqlite3 /opt/alist/data/data.db ".read /alist.sql"
+  cd /opt/alist
+  /opt/alist/alist admin
+  cd /www/
 
   gh_proxy=$(head -n 1 "/data/github_proxy.txt" 2>/dev/null || echo "")
   wget -T 30 -t 2 ${gh_proxy}https://raw.githubusercontent.com/xiaoyaliu00/data/main/tvbox.zip -O tvbox.zip || \
@@ -40,15 +44,39 @@ init() {
   unzip -q -o tvbox.zip
 
   rm -f mobi.tgz tvbox.zip index.zip index.txt version.txt update.zip
+  echo "1" > /opt/alist/data/.init
+}
+
+upgrade_h2() {
+  if [ -f /data/h2.version.txt ]; then
+    return
+  fi
+  echo "try to upgrade database"
+  file=/opt/atv/data/data
+  [ -f /data/atv.mv.db ] && file=/data/atv
+  echo "export database $file"
+  /jre/bin/java -cp /h2-2.1.214.jar org.h2.tools.Script \
+  -url jdbc:h2:file:$file \
+  -user sa -password password \
+  -script backup.sql && \
+  echo "import database" && \
+  rm -f ${file}.mv.db ${file}.trace.db && \
+  /jre/bin/java -cp /opt/atv/BOOT-INF/lib/h2-2.3.232.jar org.h2.tools.RunScript \
+  -url jdbc:h2:file:$file \
+  -user sa -password password \
+  -script backup.sql && \
+  echo "upgraded h2 to 2.3.232" && \
+  echo "2.3.232" > /data/h2.version.txt
 }
 
 echo "Install mode: $INSTALL"
-cat data/app_version
+cat /app_version
 date
 uname -mor
 
+upgrade_h2
 restore_database
-if [ -f /www/tvbox/my.json ]; then
+if [ "$init_version" = "1" ]; then
   echo "已经初始化成功"
 else
   init
@@ -56,7 +84,7 @@ fi
 
 if [ ! -d /www/cat ]; then
   echo "unzip cat.zip"
-  mkdir /www/cat
+  mkdir -p /www/cat
   unzip -q -o /cat.zip -d /www/cat
 fi
 [ -d /data/cat ] && cp -r /data/cat/* /www/cat/
@@ -64,7 +92,7 @@ fi
 [ ! -f /data/pg.zip ] && cp /pg.zip /data/pg.zip
 if [ ! -d /www/pg ]; then
   echo "unzip pg.zip"
-  mkdir /www/pg
+  mkdir -p /www/pg
   unzip -q -o /data/pg.zip -d /www/pg
 fi
 [ -d /data/pg ] && cp -r /data/pg/* /www/pg/
@@ -72,6 +100,6 @@ fi
 [ ! -f /data/zx.zip ] && cp /zx.zip /data/zx.zip
 if [ ! -d /www/zx ]; then
   echo "unzip zx.zip"
-  mkdir /www/zx
+  mkdir -p /www/zx
   unzip -q -o /data/zx.zip -d /www/zx
 fi

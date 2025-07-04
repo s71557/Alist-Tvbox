@@ -1,0 +1,28 @@
+FROM haroldli/alist-base:latest
+
+LABEL MAINTAINER="Har01d"
+
+ENV MEM_OPT="-Xmx512M" ALIST_PORT=5344 INSTALL=xiaoya
+
+COPY config/alist.json /
+
+COPY entrypoint.sh /
+COPY init.sh /
+
+COPY data/tvbox.zip /
+COPY data/index.share.zip /
+COPY data/cat.zip /
+COPY data/pg.zip /
+COPY data/zx.zip /
+COPY data/data.zip /
+COPY data/base_version /
+
+COPY target/application/ ./
+
+COPY data/version /app_version
+
+EXPOSE 4567 80
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+CMD ["81", "--spring.profiles.active=production,xiaoya"]

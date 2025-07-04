@@ -53,7 +53,7 @@ public class TelegramController {
 
     @GetMapping("/api/telegram/search")
     public List<Message> searchByKeyword(String wd) {
-        return telegramService.search(wd, 100);
+        return telegramService.search(wd, 100, false);
     }
 
     @GetMapping("/tg-search")
@@ -75,6 +75,27 @@ public class TelegramController {
             return telegramService.searchMovies(wd, 20);
         }
         return telegramService.category();
+    }
+
+    @GetMapping("/tg-db")
+    public Object db(String id, String t, String wd, String sort, Integer year, String genre, String region, @RequestParam(required = false, defaultValue = "1") int pg) throws IOException {
+        return db("", id, t, wd, sort, year, genre, region, pg);
+    }
+
+    @GetMapping("/tg-db/{token}")
+    public Object db(@PathVariable String token, String id, String t, String wd, String sort, Integer year, String genre, String region, @RequestParam(required = false, defaultValue = "1") int pg) throws IOException {
+        subscriptionService.checkToken(token);
+        if (StringUtils.isNotBlank(id)) {
+            return telegramService.detail(id);
+        } else if (StringUtils.isNotBlank(t)) {
+            if (t.equals("0")) {
+                t = "suggestion";
+            }
+            return telegramService.listDouban(t, sort, year, genre, region, pg);
+        } else if (StringUtils.isNotBlank(wd)) {
+            return telegramService.searchDouban(wd, 20);
+        }
+        return telegramService.categoryDouban();
     }
 
     @GetMapping("/tgsz")

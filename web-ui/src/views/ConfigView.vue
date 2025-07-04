@@ -87,7 +87,7 @@
           </el-form>
         </el-card>
 
-        <el-card class="box-card" v-if="dockerVersion||appVersion">
+        <el-card class="box-card" v-if="dockerVersion||appVersion||aListVersion">
           <template #header>
             <div class="card-header">
               <span>应用数据</span>
@@ -131,7 +131,7 @@
           </div>
         </el-card>
 
-        <el-card class="box-card" v-if="movieVersion">
+        <el-card class="box-card" v-if="movieVersion&&!store.standalone">
           <template #header>
             <div class="card-header">豆瓣电影数据</div>
           </template>
@@ -211,9 +211,11 @@
         </el-form-item>
         <el-form-item label="AList管理密码" v-if="!store.xiaoya">
           <el-input v-model="atvPass" style="width: 160px" type="password" show-password/>
+          <el-button type="primary" class="hint" @click="resetAListPassword">重置</el-button>
         </el-form-item>
         <el-form-item label="AList TvBox API Key">
           <el-input v-model="apiKey" style="width: 300px" type="password" readonly show-password/>
+          <el-button type="primary" class="hint" @click="resetApiKey">重置</el-button>
         </el-form-item>
         <el-form-item label="Cookie地址">
           <a :href="currentUrl + '/ali/token/' + aliSecret" target="_blank">
@@ -316,12 +318,7 @@
               inactive-text="关闭"
               @change="updateAliTo115"
             />
-            <span class="hint">帐号页面添加115网盘</span>
-          </el-form-item>
-          <el-form-item label-width="180px" label="115删除码">
-            <el-input v-model="deleteCode115" style="width: 150px" type="password" show-password/>
-            <span class="hint"></span>
-            <el-button type="primary" @click="updateDeleteCode115">更新</el-button>
+            <span class="hint">帐号页面添加115网盘、配置删除码</span>
           </el-form-item>
         </div>
         <div class="el-row">
@@ -394,7 +391,7 @@ const options = [
     ]
   }
 ]
-const tooltip = ref('sudo bash -c "$(curl -fsSL https://d.har01d.cn/update_xiaoya.sh)"')
+const tooltip = ref('sudo bash -c "$(curl -fsSL https://d.har01d.cn/alist-tvbox.sh)"')
 const aListStarted = ref(false)
 const aListRestart = ref(false)
 const mixSiteSource = ref(false)
@@ -431,7 +428,6 @@ const atvPass = ref('')
 const apiKey = ref('')
 const apiClientId = ref('')
 const apiClientSecret = ref('')
-const deleteCode115 = ref('')
 const scheduleTime = ref(new Date(2023, 6, 20, 8, 0))
 const login = ref({
   username: '',
@@ -500,6 +496,20 @@ const updateUserAgent = (value: string) => {
   })
 }
 
+const resetApiKey = () => {
+  axios.post('/api/settings/apikey').then(({data}) => {
+    apiKey.value = data
+    ElMessage.success('重置成功')
+  })
+}
+
+const resetAListPassword = () => {
+  axios.post('/api/alist/password').then(({data}) => {
+    atvPass.value = data
+    ElMessage.success('重置成功，重启生效')
+  })
+}
+
 const updateDeleteDelayTime = () => {
   axios.post('/api/settings', {name: 'delete_delay_time', value: deleteDelayTime.value}).then(() => {
     ElMessage.success('更新成功')
@@ -550,12 +560,6 @@ const updateAliTo115 = () => {
 
 const updateDriverRoundRobin = () => {
   axios.post('/api/settings', {name: 'driver_round_robin', value: driverRoundRobin.value}).then(() => {
-    ElMessage.success('更新成功')
-  })
-}
-
-const updateDeleteCode115 = () => {
-  axios.post('/api/settings', {name: 'delete_code_115', value: deleteCode115.value}).then(() => {
     ElMessage.success('更新成功')
   })
 }
@@ -644,14 +648,13 @@ onMounted(() => {
     apiKey.value = data.api_key
     apiClientId.value = data.open_api_client_id || ''
     apiClientSecret.value = data.open_api_client_secret || ''
-    deleteCode115.value = data.delete_code_115 || ''
     login.value.username = data.alist_username
     login.value.password = data.alist_password
     login.value.enabled = data.alist_login === 'true'
     if (store.standalone) {
       tooltip.value = 'bash -c "$(curl -fsSL http://d.har01d.cn/install-service.sh)"'
     } else {
-      tooltip.value = 'sudo bash -c "$(curl -fsSL http://d.har01d.cn/update_' + data.install_mode + '.sh)"'
+      tooltip.value = 'sudo bash -c "$(curl -fsSL http://d.har01d.cn/alist-tvbox.sh)" -s update'
     }
   })
   axios.get('/api/alist/status').then(({data}) => {

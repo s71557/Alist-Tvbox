@@ -10,7 +10,6 @@ import cn.har01d.alist_tvbox.entity.Account;
 import cn.har01d.alist_tvbox.entity.AccountRepository;
 import cn.har01d.alist_tvbox.entity.Setting;
 import cn.har01d.alist_tvbox.entity.SettingRepository;
-import cn.har01d.alist_tvbox.entity.UserRepository;
 import cn.har01d.alist_tvbox.exception.BadRequestException;
 import cn.har01d.alist_tvbox.exception.NotFoundException;
 import cn.har01d.alist_tvbox.model.AListUser;
@@ -26,7 +25,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -81,37 +82,34 @@ public class AccountService {
     public static final int IDX = 4600;
     private final AccountRepository accountRepository;
     private final SettingRepository settingRepository;
-    private final UserRepository userRepository;
     private final AListLocalService aListLocalService;
     private final IndexService indexService;
     private final RestTemplate aListClient;
     private final RestTemplate restTemplate;
     private final TaskScheduler scheduler;
     private final ObjectMapper objectMapper;
-    private final JdbcTemplate jdbcTemplate;
+    private final JdbcTemplate alistJdbcTemplate;
     private final AppProperties appProperties;
     private ScheduledFuture<?> scheduledFuture;
 
     public AccountService(AccountRepository accountRepository,
                           SettingRepository settingRepository,
-                          UserRepository userRepository,
                           AListLocalService aListLocalService,
                           IndexService indexService,
                           AppProperties appProperties,
                           TaskScheduler scheduler,
                           RestTemplateBuilder builder,
                           ObjectMapper objectMapper,
-                          JdbcTemplate jdbcTemplate) {
+                          @Qualifier("alistJdbcTemplate") JdbcTemplate alistJdbcTemplate) {
         this.accountRepository = accountRepository;
         this.settingRepository = settingRepository;
-        this.userRepository = userRepository;
         this.aListLocalService = aListLocalService;
         this.indexService = indexService;
         this.appProperties = appProperties;
         this.scheduler = scheduler;
         this.objectMapper = objectMapper;
-        this.jdbcTemplate = jdbcTemplate;
-        this.aListClient = builder.rootUri("http://localhost:" + (appProperties.isHostmode() ? "5234" : "5244")).build();
+        this.alistJdbcTemplate = alistJdbcTemplate;
+        this.aListClient = builder.rootUri("http://localhost:" + aListLocalService.getInternalPort()).build();
         this.restTemplate = builder.build();
     }
 
@@ -122,6 +120,12 @@ public class AccountService {
         }
         if (!settingRepository.existsByName("fix_ali_concurrency")) {
             fixConcurrency();
+        }
+        if (!settingRepository.existsByName("fix_ali_chunk_size")) {
+            fixChunkSize();
+        }
+        if (!settingRepository.existsByName("security_hardening")) {
+            securityHardening();
         }
         scheduleAutoCheckinTime();
 
@@ -150,7 +154,6 @@ public class AccountService {
             account.setRefreshToken(refreshToken);
             account.setOpenToken(openToken);
             account.setMaster(true);
-            account.setUser(userRepository.findById(1).orElse(null));
 
             if (!StringUtils.isAllBlank(refreshToken, openToken)) {
                 accountRepository.save(account);
@@ -160,7 +163,6 @@ public class AccountService {
             readLogin();
         }
 
-        jdbcTemplate.execute("ALTER TABLE ACCOUNT ALTER COLUMN OPEN_ACCESS_TOKEN TEXT");
         if (accountRepository.count() > 0) {
             try {
                 updateAliAccountId();
@@ -198,6 +200,15 @@ public class AccountService {
         settingRepository.save(new Setting("fix_ali_concurrency", ""));
     }
 
+    private void fixChunkSize() {
+        List<Account> accounts = accountRepository.findAll();
+        for (Account account : accounts) {
+            account.setChunkSize(256);
+        }
+        accountRepository.saveAll(accounts);
+        settingRepository.save(new Setting("fix_ali_chunk_size", ""));
+    }
+
     private void updateAliAccountId() {
         accountRepository.getFirstByMasterTrue().map(Account::getId).ifPresent(id -> {
             int storageId = IDX + (id - 1) * 2;
@@ -217,7 +228,7 @@ public class AccountService {
         }
     }
 
-    private String generatePassword() {
+    public String generatePassword() {
         Setting setting = settingRepository.findById(ATV_PASSWORD).orElse(null);
         if (setting == null) {
             log.info("generate new password");
@@ -225,6 +236,15 @@ public class AccountService {
             settingRepository.save(setting);
         }
         return setting.getValue();
+    }
+
+    public String resetPassword() {
+        log.info("generate new password");
+        String password = IdUtils.generate(12);
+        settingRepository.save(new Setting(ATV_PASSWORD, password));
+        String sql = "UPDATE x_users SET password = '" + password + "' WHERE username = 'atv'";
+        Utils.executeUpdate(sql);
+        return password;
     }
 
     private String readRefreshToken() {
@@ -350,9 +370,6 @@ public class AccountService {
             }
         }
 
-        //Utils.execute("/downloadZx.sh");
-        //Utils.execute("/downloadPg.sh");
-
         indexService.getRemoteVersion();
     }
 
@@ -447,6 +464,17 @@ public class AccountService {
         return response.getBody();
     }
 
+    private void securityHardening() {
+        String username = settingRepository.findById(ALIST_USERNAME).map(Setting::getValue).orElse("");
+        String password = settingRepository.findById(ALIST_PASSWORD).map(Setting::getValue).orElse("");
+        if (username.isEmpty() || password.isEmpty()) {
+            settingRepository.save(new Setting(ALIST_LOGIN, "true"));
+            settingRepository.save(new Setting(ALIST_USERNAME, Utils.generateUsername()));
+            settingRepository.save(new Setting(ALIST_PASSWORD, Utils.generateSecurePassword()));
+        }
+        settingRepository.save(new Setting("security_hardening", ""));
+    }
+
     public void enableLogin() {
         AListLogin login = new AListLogin();
         login.setEnabled(settingRepository.findById(ALIST_LOGIN).map(Setting::getValue).orElse("").equals("true"));
@@ -454,7 +482,13 @@ public class AccountService {
         login.setPassword(settingRepository.findById(ALIST_PASSWORD).map(Setting::getValue).orElse(""));
 
         try {
-            String sql = "INSERT INTO x_users (id,username,password,base_path,role,permission) VALUES (2,'guest','guest_Api789','/',1,256)";
+            String sql;
+            if (!existsById("x_users", 2)) {
+                sql = "INSERT INTO x_users (id,username,password,base_path,role,permission) VALUES (2,'guest','alist_tvbox','/',1,256)";
+                Utils.executeUpdate(sql);
+            }
+
+            sql = "update x_users set disabled = 1 where username = 'admin'";
             Utils.executeUpdate(sql);
             if (login.isEnabled()) {
                 log.info("enable AList login: {}", login.getUsername());
@@ -473,7 +507,7 @@ public class AccountService {
                 }
             } else {
                 log.info("enable AList guest");
-                sql = "update x_users set disabled = 0, permission = 368, password = 'guest_Api789' where username = 'guest'";
+                sql = "update x_users set disabled = 0, permission = 368, password = 'alist_tvbox' where username = 'guest'";
                 Utils.executeUpdate(sql);
                 sql = "delete from x_users where id = 3";
                 Utils.executeUpdate(sql);
@@ -484,13 +518,24 @@ public class AccountService {
         log.info("{} AList user {}", login.isEnabled() ? "enable" : "disable", login.getUsername());
     }
 
+    public boolean existsById(String tableName, long id) {
+        String sql = "SELECT 1 FROM " + tableName + " WHERE id = " + id + " LIMIT 1";
+        try {
+//            Integer result = alistJdbcTemplate.queryForObject(sql, new Object[]{id}, Integer.class);
+//            return result != null;
+            String result = Utils.executeQuery(sql);
+            return StringUtils.isNotBlank(result);
+        } catch (EmptyResultDataAccessException e) {
+            return false;
+        }
+    }
+
     public void enableMyAli() {
         List<Account> list = accountRepository.findAll();
         log.debug("enableMyAli {}", list.size());
         try {
             for (Account account : list) {
                 try {
-                    int code;
                     int id = IDX + (account.getId() - 1) * 2;
                     String name = account.getNickname();
                     if (StringUtils.isBlank(name)) {
@@ -504,11 +549,11 @@ public class AccountService {
                         aListLocalService.saveStorage(storage);
                     } else {
                         sql = "DELETE FROM x_storages WHERE id = " + id;
-                        code = Utils.executeUpdate(sql);
-                        log.info("remove AList storage {} {} {}", id, name, code);
+                        Utils.executeUpdate(sql);
+                        log.info("remove AList storage {} {}", id, name);
                         sql = "DELETE FROM x_storages WHERE id = " + (id + 1);
-                        code = Utils.executeUpdate(sql);
-                        log.info("remove AList storage {} {} {}", id, name, code);
+                        Utils.executeUpdate(sql);
+                        log.info("remove AList storage {} {}", id, name);
                     }
                     log.info("enableMyAli {}", account.isShowMyAli() || account.isMaster());
                 } catch (Exception e) {
@@ -571,6 +616,7 @@ public class AccountService {
         String token = login();
         AListUser guest = getUser(2, token);
         if (guest != null) {
+            guest.setPassword("alist_tvbox");
             guest.setDisabled(login.isEnabled());
             updateUser(guest, token);
         }
@@ -777,7 +823,6 @@ public class AccountService {
     public Account create(AccountDto dto) {
         long count = validateCreate(dto);
         Account account = new Account();
-        account.setId((int) count + 1);
         account.setRefreshToken(dto.getRefreshToken().trim());
         account.setOpenToken(dto.getOpenToken().trim());
         account.setAutoCheckin(dto.isAutoCheckin());
@@ -796,7 +841,6 @@ public class AccountService {
             updateTokens();
             int storageId = IDX + (account.getId() - 1) * 2;
             aListLocalService.setSetting("ali_account_id", String.valueOf(storageId), "number");
-            aListLocalService.startAListServer();
         } else if (account.isMaster()) {
             log.info("sync tokens for account {}", account);
             updateMaster(account);

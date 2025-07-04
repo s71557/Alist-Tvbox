@@ -12,7 +12,6 @@ import cn.har01d.alist_tvbox.entity.ShareRepository;
 import cn.har01d.alist_tvbox.exception.BadRequestException;
 import cn.har01d.alist_tvbox.exception.NotFoundException;
 import cn.har01d.alist_tvbox.storage.BaiduNetdisk;
-import cn.har01d.alist_tvbox.storage.Open115;
 import cn.har01d.alist_tvbox.storage.Pan115;
 import cn.har01d.alist_tvbox.storage.Pan123;
 import cn.har01d.alist_tvbox.storage.Pan139;
@@ -26,14 +25,17 @@ import cn.har01d.alist_tvbox.storage.UCTV;
 import cn.har01d.alist_tvbox.util.BiliBiliUtils;
 import cn.har01d.alist_tvbox.util.Constants;
 import cn.har01d.alist_tvbox.util.Utils;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
@@ -59,6 +61,8 @@ public class DriverAccountService {
     private final AccountService accountService;
     private final AListLocalService aListLocalService;
     private final RestTemplate restTemplate;
+    private final ObjectMapper objectMapper;
+    private final JdbcTemplate alistJdbcTemplate;
     private final Map<String, QuarkUCTV> drivers = new HashMap<>();
 
     public DriverAccountService(PanAccountRepository panAccountRepository,
@@ -67,7 +71,9 @@ public class DriverAccountService {
                                 ShareRepository shareRepository,
                                 AccountService accountService,
                                 AListLocalService aListLocalService,
-                                RestTemplateBuilder builder) {
+                                RestTemplateBuilder builder,
+                                ObjectMapper objectMapper,
+                                @Qualifier("alistJdbcTemplate") JdbcTemplate alistJdbcTemplate) {
         this.panAccountRepository = panAccountRepository;
         this.driverAccountRepository = driverAccountRepository;
         this.settingRepository = settingRepository;
@@ -75,6 +81,8 @@ public class DriverAccountService {
         this.accountService = accountService;
         this.aListLocalService = aListLocalService;
         this.restTemplate = builder.build();
+        this.objectMapper = objectMapper;
+        this.alistJdbcTemplate = alistJdbcTemplate;
     }
 
     @PostConstruct
@@ -88,7 +96,12 @@ public class DriverAccountService {
         if (!settingRepository.existsByName("fix_driver_concurrency")) {
             fixConcurrency();
         }
-
+        if (!settingRepository.existsByName("fix_driverChunkSize")) {
+            fixChunkSize();
+        }
+        if (!settingRepository.existsByName("migrate_115_delete_code")) {
+            migrate115DeleteCode();
+        }
 
         String deviceId = settingRepository.findById("quark_device_id").map(Setting::getValue).orElse(null);
         if (deviceId == null) {
@@ -111,6 +124,50 @@ public class DriverAccountService {
         }
         driverAccountRepository.saveAll(accounts);
         settingRepository.save(new Setting("fix_driver_concurrency", ""));
+    }
+
+    private void fixChunkSize() {
+        log.info("fix chunk size");
+        List<DriverAccount> accounts = driverAccountRepository.findAll();
+        for (var account : accounts) {
+            int chunkSize = 256;
+            switch (account.getType()) {
+                case PAN115, OPEN115, BAIDU, THUNDER, CLOUD189 -> chunkSize = 1024;
+            }
+            String json = account.getAddition();
+            if (StringUtils.isBlank(json)) {
+                json = "{}";
+            }
+            try {
+                ObjectNode object = objectMapper.readValue(json, ObjectNode.class);
+                object.put("chunk_size", chunkSize);
+                account.setAddition(objectMapper.writeValueAsString(object));
+            } catch (Exception e) {
+                log.warn("<UNK>", e);
+            }
+        }
+        driverAccountRepository.saveAll(accounts);
+        settingRepository.save(new Setting("fix_driverChunkSize", ""));
+    }
+
+    private void migrate115DeleteCode() {
+        var driver = driverAccountRepository.findByTypeAndMasterTrue(DriverType.PAN115);
+        driver.ifPresent(account -> {
+            settingRepository.findById("delete_code_115").ifPresent(setting -> {
+                try {
+                    if (StringUtils.isBlank(account.getAddition())) {
+                        account.setAddition("{}");
+                    }
+                    ObjectNode jsonNode = objectMapper.readValue(account.getAddition(), ObjectNode.class);
+                    jsonNode.put("delete_code", setting.getValue());
+                    account.setAddition(objectMapper.writeValueAsString(jsonNode));
+                    driverAccountRepository.save(account);
+                } catch (Exception e) {
+                    log.warn("", e);
+                }
+            });
+        });
+        settingRepository.save(new Setting("migrate_115_delete_code", ""));
     }
 
     private void migrateDriverAccounts() {
@@ -234,9 +291,6 @@ public class DriverAccountService {
         if (driverAccountRepository.existsByNameAndType(account.getName(), account.getType())) {
             throw new BadRequestException("账号名称已经存在");
         }
-        if (driverAccountRepository.count() == 0) {
-            aListLocalService.startAListServer();
-        }
         account.setId(null);
         if (driverAccountRepository.countByType(account.getType()) == 0) {
             account.setMaster(true);
@@ -292,7 +346,7 @@ public class DriverAccountService {
         account.setFolder(dto.getFolder());
         account.setConcurrency(dto.getConcurrency());
         account.setAddition(dto.getAddition());
-        if (dto.getType() == DriverType.BAIDU && StringUtils.isNotBlank(dto.getAddition())) {
+        if (dto.getType() == DriverType.BAIDU && (StringUtils.isNotBlank(dto.getAddition())) && !"{}".equals(dto.getAddition())) {
             account.setToken("");
         }
 
@@ -314,9 +368,6 @@ public class DriverAccountService {
     public void delete(Integer id) {
         DriverAccount account = driverAccountRepository.findById(id).orElse(null);
         if (account != null) {
-            if (account.isMaster() && account.getType() != DriverType.UC_TV && account.getType() != DriverType.QUARK_TV) {
-                throw new BadRequestException("不能删除主账号");
-            }
             driverAccountRepository.deleteById(id);
             String token = accountService.login();
             accountService.deleteStorage(IDX + account.getId(), token);
@@ -345,7 +396,7 @@ public class DriverAccountService {
                 throw new BadRequestException("Token不能为空");
             }
             if (dto.getToken().startsWith("Basic ")) {
-                dto.setToken(dto.getToken().substring(6));
+                dto.setToken(dto.getToken().substring(6).trim());
             }
         } else if (StringUtils.isBlank(dto.getCookie()) && StringUtils.isBlank(dto.getToken())) {
             throw new BadRequestException("Cookie和Token不能同时为空");
@@ -360,7 +411,7 @@ public class DriverAccountService {
             }
         }
         if (dto.getCookie() != null) {
-            dto.setCookie(dto.getCookie().trim());
+            dto.setCookie(dto.getCookie().replace("\n", ";").trim());
         }
     }
 
@@ -439,7 +490,7 @@ public class DriverAccountService {
         long t = System.currentTimeMillis();
         var json = restTemplate.getForObject("https://uop.quark.cn/cas/ajax/getTokenForQrcodeLogin?client_id=532&v=1.2&request_id={t}", ObjectNode.class, t);
         String token = json.get("data").get("members").get("token").asText();
-        String qr = BiliBiliUtils.getQrCode("https://su.quark.cn/4_eMHBJ?token=" + token + "&client_id=532&ssb=weblogin&uc_param_str=&uc_biz_str=S%3Acustom%7COPT%3ASAREA%400%7COPT%3AIMMERSIVE%401%7COPT%3ABACK_BTN_STYLE%400");
+        String qr = Utils.getQrCode("https://su.quark.cn/4_eMHBJ?token=" + token + "&client_id=532&ssb=weblogin&uc_param_str=&uc_biz_str=S%3Acustom%7COPT%3ASAREA%400%7COPT%3AIMMERSIVE%401%7COPT%3ABACK_BTN_STYLE%400");
         var res = new QuarkUCTV.LoginResponse();
         res.setQueryToken(token);
         res.setQrData(qr);
@@ -450,7 +501,7 @@ public class DriverAccountService {
         long t = System.currentTimeMillis();
         var json = restTemplate.getForObject("https://api.open.uc.cn/cas/ajax/getTokenForQrcodeLogin?client_id=381&v=1.2&request_id={t}", ObjectNode.class, t);
         String token = json.get("data").get("members").get("token").asText();
-        String qr = BiliBiliUtils.getQrCode("https://su.uc.cn/1_n0ZCv?uc_param_str=dsdnfrpfbivesscpgimibtbmnijblauputogpintnwktprchmt&token=" + token + "&client_id=381&uc_biz_str=S%3Acustom%7CC%3Atitlebar_fix");
+        String qr = Utils.getQrCode("https://su.uc.cn/1_n0ZCv?uc_param_str=dsdnfrpfbivesscpgimibtbmnijblauputogpintnwktprchmt&token=" + token + "&client_id=381&uc_biz_str=S%3Acustom%7CC%3Atitlebar_fix");
         var res = new QuarkUCTV.LoginResponse();
         res.setQueryToken(token);
         res.setQrData(qr);
@@ -566,6 +617,7 @@ public class DriverAccountService {
             case PAN115 -> get115UserInfo(account);
             case QUARK -> getQuarkUserInfo(account);
             case UC -> getUcUserInfo(account);
+            case CLOUD189 -> get189UserInfo(account);
             default -> null;
         };
     }
@@ -642,6 +694,18 @@ public class DriverAccountService {
         json = restTemplate.exchange(url, HttpMethod.GET, entity, ObjectNode.class).getBody();
         info.setId(String.valueOf(json.get("data").get("uid").asLong()));
         info.setName(json.get("data").get("nickname").asText());
+        return info;
+    }
+
+    private AccountInfo get189UserInfo(DriverAccount account) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.COOKIE, account.getCookie().trim());
+        headers.set(HttpHeaders.ACCEPT, "application/json;charset=UTF-8");
+        HttpEntity<Void> entity = new HttpEntity<>(null, headers);
+        String url = "https://cloud.189.cn/api/open/user/getUserInfoForPortal.action?noCache=" + System.currentTimeMillis();
+        var json = restTemplate.exchange(url, HttpMethod.GET, entity, ObjectNode.class).getBody();
+        var info = new AccountInfo();
+        info.setName(json.get("userExtResp").get("nickName").asText());
         return info;
     }
 }

@@ -1,4 +1,4 @@
-name: 'release docker'
+name: 'build latest docker'
 
 on:
   workflow_run:
@@ -17,13 +17,14 @@ on:
       - 'README.md'
       - 'pom.xml'
       - 'pom-standalone.xml'
-      - 'Dockerfile-v7'
-      - 'Dockerfile-base'
-      - 'Dockerfile-base-new'
-      - 'Dockerfile-native-base'
-      - 'Dockerfile-jre'
+      - 'docker/Dockerfile-v7'
+      - 'docker/Dockerfile-base'
+      - 'docker/Dockerfile-base-new'
+      - 'docker/Dockerfile-native-base'
+      - 'docker/Dockerfile-jre'
       - 'scripts/install.sh'
       - 'scripts/install-service.sh'
+      - 'scripts/alist-tvbox.sh'
       - 'scripts/update_hostmode.sh'
       - 'scripts/update_native.sh'
       - 'scripts/update_native_host.sh'
@@ -40,15 +41,15 @@ on:
       - '.github/ISSUE_TEMPLATE/**'
 
 jobs:
-  release:
+  build-docker:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Setup node
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: ./web-ui
       - name: Install npm
@@ -57,12 +58,12 @@ jobs:
       - name: Build web UI
         working-directory: ./web-ui
         run: npm run build
+
       - name: setup graalvm
         uses: graalvm/setup-graalvm@v1
         with:
-          java-version: '17'
-          distribution: 'graalvm' # See 'Options' for all available distributions
-          components: 'native-image'
+          java-version: '21'
+          distribution: 'graalvm'
           native-image-musl: 'true'
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: 'maven'
@@ -88,71 +89,110 @@ jobs:
           echo "${{ github.event.head_commit.message }}" >> data/version
           cp data/version data/app_version
           cat data/version
-      - name: Build docker and push
-        uses: docker/build-push-action@v4
+      - name: Build xiaoya docker and push
+        uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile-xiaoya
+          file: docker/Dockerfile-xiaoya
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Build host mode docker and push
-        uses: docker/build-push-action@v4
+      - name: Build xiaoya host mode docker and push
+        uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile-host
+          file: docker/Dockerfile-host
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox:hostmode
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox:hostmode
+            ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox:host
+            ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox-hostmode:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox-host:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Build standalone docker and push
-        uses: docker/build-push-action@v4
+      - name: Build alist docker and push
+        uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile
+          file: docker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/alist-tvbox:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Build tg docker and push
-        uses: docker/build-push-action@v4
+      - name: Build alist TG docker and push
+        uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile-tg
+          file: docker/Dockerfile-tg
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/alist-tvbox:tg
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/alist-tvbox:tg
+            ${{ secrets.DOCKERHUB_USERNAME }}/alist-tvbox:python
+            ${{ secrets.DOCKERHUB_USERNAME }}/alist-tvbox-tg:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/alist-tvbox-python:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Build native with Maven
+      - name: Build xiaoya TG docker and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile-xiaoya-tg
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox:tg
+            ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox:python
+            ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox-tg:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox-python:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build native with Maven (AMD64)
         run: |
           mvn -B -Pnative -Dnative.image.cache=true -Dnative-image.parallelism=4 package --file pom.xml
           chmod a+x target/atv
           ls -l target
-      - name: Build native docker and push
-        uses: docker/build-push-action@v4
+      - name: Build alist native docker and push
+        uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile-native
+          file: docker/Dockerfile-alist-native
           platforms: linux/amd64
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox:native
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/alist-tvbox:native
+            ${{ secrets.DOCKERHUB_USERNAME }}/alist-tvbox-native:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Build host native docker and push
-        uses: docker/build-push-action@v4
+      - name: Build xiaoya native docker and push
+        uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile-native-host
+          file: docker/Dockerfile-native
           platforms: linux/amd64
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox:native-host
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox:native
+            ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox-native:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Build xiaoya host native docker and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile-native-host
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox:native-host
+            ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox-native-host:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Send version
         env:
           api: ${{ secrets.VERSION_API }}

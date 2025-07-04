@@ -6,8 +6,12 @@ import cn.har01d.alist_tvbox.dto.tg.Chat;
 import cn.har01d.alist_tvbox.dto.tg.Message;
 import cn.har01d.alist_tvbox.dto.tg.SearchResponse;
 import cn.har01d.alist_tvbox.dto.tg.SearchResult;
+import cn.har01d.alist_tvbox.entity.Movie;
+import cn.har01d.alist_tvbox.entity.MovieRepository;
 import cn.har01d.alist_tvbox.entity.Setting;
 import cn.har01d.alist_tvbox.entity.SettingRepository;
+import cn.har01d.alist_tvbox.model.Filter;
+import cn.har01d.alist_tvbox.model.FilterValue;
 import cn.har01d.alist_tvbox.tvbox.Category;
 import cn.har01d.alist_tvbox.tvbox.CategoryList;
 import cn.har01d.alist_tvbox.tvbox.MovieDetail;
@@ -16,7 +20,9 @@ import cn.har01d.alist_tvbox.util.BiliBiliUtils;
 import cn.har01d.alist_tvbox.util.IdUtils;
 import cn.har01d.alist_tvbox.util.Utils;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.LoadingCache;
 import jakarta.annotation.PostConstruct;
@@ -32,6 +38,15 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.data.domain.Example;
+import org.springframework.data.domain.ExampleMatcher;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
@@ -70,11 +85,14 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.Comparator;
@@ -87,27 +105,110 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import static cn.har01d.alist_tvbox.util.Constants.FOLDER;
 
 @Slf4j
 @Service
 public class TelegramService {
     private final AppProperties appProperties;
     private final SettingRepository settingRepository;
+    private final MovieRepository movieRepository;
     private final ShareService shareService;
     private final TvBoxService tvBoxService;
     private final RestTemplate restTemplate;
     private final ExecutorService executorService = Executors.newFixedThreadPool(Math.min(10, Runtime.getRuntime().availableProcessors() * 2));
     private final OkHttpClient httpClient = new OkHttpClient();
     private final LoadingCache<String, InputPeer> cache = Caffeine.newBuilder().build(this::resolveUsername);
+    private final LoadingCache<String, List<Message>> searchCache = Caffeine.newBuilder().expireAfterWrite(Duration.ofMinutes(15)).build(this::getFromChannel);
+    private final Cache<String, MovieList> douban = Caffeine.newBuilder().expireAfterWrite(Duration.ofHours(1)).build();
     private MTProtoTelegramClient client;
+    private final List<String> fields = new ArrayList<>(List.of("id", "name", "genre", "description", "language", "country", "directors", "editors", "actors", "cover", "dbScore", "year"));
+    private final List<FilterValue> filters = Arrays.asList(
+            new FilterValue("原始顺序", ""),
+            new FilterValue("评分⬇️", "dbScore,desc;year,desc"),
+            new FilterValue("评分⬆️", "dbScore,asc;year,desc"),
+            new FilterValue("年份⬇️", "year,desc;dbScore,desc"),
+            new FilterValue("年份⬆️", "year,asc;dbScore,desc"),
+            new FilterValue("名字⬇️", "name,desc;year,desc;dbScore,desc"),
+            new FilterValue("名字⬆️", "name,asc;year,desc;dbScore,desc"),
+            new FilterValue("类型⬇️", "genre,desc;year,desc;dbScore,desc"),
+            new FilterValue("类型⬆️", "genre,asc;year,desc;dbScore,desc"),
+            new FilterValue("地区⬇️", "country,desc;year,desc;dbScore,desc"),
+            new FilterValue("地区⬆️", "country,asc;year,desc;dbScore,desc"),
+            new FilterValue("语言⬇️", "language,desc;year,desc;dbScore,desc"),
+            new FilterValue("语言⬆️", "language,asc;year,desc;dbScore,desc"),
+            new FilterValue("ID⬇️", "id,desc"),
+            new FilterValue("ID⬆️", "id,asc")
+    );
+    private final List<FilterValue> filters2 = Arrays.asList(
+            new FilterValue("全部类型", ""),
+            new FilterValue("喜剧", "喜剧"),
+            new FilterValue("爱情", "爱情"),
+            new FilterValue("动作", "动作"),
+            new FilterValue("科幻", "科幻"),
+            new FilterValue("动画", "动画"),
+            new FilterValue("悬疑", "悬疑"),
+            new FilterValue("冒险", "冒险"),
+            new FilterValue("家庭", "家庭"),
+            new FilterValue("剧情", "剧情"),
+            new FilterValue("历史", "历史"),
+            new FilterValue("奇幻", "奇幻"),
+            new FilterValue("音乐", "音乐"),
+            new FilterValue("歌舞", "歌舞"),
+            new FilterValue("惊悚", "惊悚"),
+            new FilterValue("恐怖", "恐怖"),
+            new FilterValue("犯罪", "犯罪"),
+            new FilterValue("灾难", "灾难"),
+            new FilterValue("战争", "战争"),
+            new FilterValue("传记", "传记"),
+            new FilterValue("武侠", "武侠"),
+            new FilterValue("情色", "情色"),
+            new FilterValue("西部", "西部"),
+            new FilterValue("真人秀", "真人秀"),
+            new FilterValue("脱口秀", "脱口秀"),
+            new FilterValue("纪录片", "纪录片"),
+            new FilterValue("短片", "短片")
+    );
+    private final List<FilterValue> filters3 = Arrays.asList(
+            new FilterValue("全部地区", ""),
+            new FilterValue("中国", "中国"),
+            new FilterValue("中国大陆", "中国大陆"),
+            new FilterValue("中国香港", "中国香港"),
+            new FilterValue("中国台湾", "中国台湾"),
+            new FilterValue("美国", "美国"),
+            new FilterValue("英国", "英国"),
+            new FilterValue("韩国", "韩国"),
+            new FilterValue("日本", "日本"),
+            new FilterValue("法国", "法国"),
+            new FilterValue("德国", "德国"),
+            new FilterValue("意大利", "意大利"),
+            new FilterValue("西班牙", "西班牙"),
+            new FilterValue("印度", "印度"),
+            new FilterValue("泰国", "泰国"),
+            new FilterValue("俄罗斯", "俄罗斯"),
+            new FilterValue("加拿大", "加拿大"),
+            new FilterValue("澳大利亚", "澳大利亚"),
+            new FilterValue("爱尔兰", "爱尔兰"),
+            new FilterValue("瑞典", "瑞典"),
+            new FilterValue("巴西", "巴西"),
+            new FilterValue("丹麦", "丹麦")
+    );
 
-    public TelegramService(AppProperties appProperties, SettingRepository settingRepository, ShareService shareService, TvBoxService tvBoxService, RestTemplateBuilder restTemplateBuilder) {
+    public TelegramService(AppProperties appProperties,
+                           SettingRepository settingRepository,
+                           MovieRepository movieRepository,
+                           ShareService shareService,
+                           TvBoxService tvBoxService,
+                           RestTemplateBuilder restTemplateBuilder) {
         this.appProperties = appProperties;
         this.settingRepository = settingRepository;
+        this.movieRepository = movieRepository;
         this.shareService = shareService;
         this.tvBoxService = tvBoxService;
         this.restTemplate = restTemplateBuilder.build();
@@ -166,7 +267,7 @@ public class TelegramService {
                         settingRepository.save(new Setting("tg_phase", "0"));
                         log.info("Scan QR {}, expired: {}.", ctx.loginUrl(), ctx.expiresIn());
                         try {
-                            String img = BiliBiliUtils.getQrCode(ctx.loginUrl());
+                            String img = Utils.getQrCode(ctx.loginUrl());
                             settingRepository.save(new Setting("tg_qr_img", img));
                         } catch (IOException e) {
                             return Mono.error(e);
@@ -414,6 +515,14 @@ public class TelegramService {
             channels = appProperties.getTgChannels().split(",");
         }
 
+        for (String type : appProperties.getTgDrivers()) {
+            var category = new Category();
+            category.setType_id("type:" + type);
+            category.setType_name(getTypeName(type));
+            category.setType_flag(0);
+            list.add(category);
+        }
+
         for (String channel : channels) {
             var category = new Category();
             category.setType_id(channel);
@@ -431,6 +540,10 @@ public class TelegramService {
     }
 
     public MovieList list(String channel) throws IOException {
+        if (channel.startsWith("type:")) {
+            return loadMovies(channel.substring(5));
+        }
+
         MovieList result = new MovieList();
         List<MovieDetail> list = new ArrayList<>();
 
@@ -442,12 +555,14 @@ public class TelegramService {
         }
 
         for (Message message : messages) {
-            MovieDetail movieDetail = new MovieDetail();
-            movieDetail.setVod_id(encodeUrl(message.getLink()));
-            movieDetail.setVod_name(message.getName());
-            movieDetail.setVod_pic(getPic(message.getType()));
-            movieDetail.setVod_remarks(getTypeName(message.getType()));
-            list.add(movieDetail);
+            if (appProperties.getTgDrivers().isEmpty() || appProperties.getTgDrivers().contains(message.getType())) {
+                MovieDetail movieDetail = new MovieDetail();
+                movieDetail.setVod_id(encodeUrl(message.getLink()));
+                movieDetail.setVod_name(message.getName());
+                movieDetail.setVod_pic(getPic(message.getType()));
+                movieDetail.setVod_remarks(getTypeName(message.getType()));
+                list.add(movieDetail);
+            }
         }
 
         result.setList(list);
@@ -458,11 +573,34 @@ public class TelegramService {
         return result;
     }
 
+    public MovieList loadMovies(String type) {
+        MovieList result = new MovieList();
+        List<MovieDetail> list = new ArrayList<>();
+
+        List<Message> messages = search("", 100, true);
+        for (Message message : messages) {
+            if (type.equals(message.getType())) {
+                MovieDetail movieDetail = new MovieDetail();
+                movieDetail.setVod_id(encodeUrl(message.getLink()));
+                movieDetail.setVod_name(message.getName());
+                movieDetail.setVod_pic(getPic(message.getType()));
+                movieDetail.setVod_remarks(getTypeName(message.getType()));
+                list.add(movieDetail);
+            }
+        }
+
+        result.setList(list);
+        result.setTotal(list.size());
+        result.setLimit(list.size());
+
+        return result;
+    }
+
     public MovieList searchMovies(String keyword, int size) {
         MovieList result = new MovieList();
         List<MovieDetail> list = new ArrayList<>();
 
-        List<Message> messages = search(keyword, size);
+        List<Message> messages = search(keyword, size, false);
         for (Message message : messages) {
             MovieDetail movieDetail = new MovieDetail();
             movieDetail.setVod_id(encodeUrl(message.getLink()));
@@ -476,6 +614,404 @@ public class TelegramService {
         result.setTotal(list.size());
         result.setLimit(list.size());
 
+        return result;
+    }
+
+    public CategoryList categoryDouban() {
+        CategoryList result = new CategoryList();
+        List<Category> list = new ArrayList<>();
+
+        {
+            var category = new Category();
+            category.setType_id("hot_tv");
+            category.setType_name("热门电视剧");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("hot_movie");
+            category.setType_name("热门电影");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("tv_domestic");
+            category.setType_name("国产剧");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("tv_american");
+            category.setType_name("欧美剧");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("tv_animation");
+            category.setType_name("动漫");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("tv_variety_show");
+            category.setType_name("综艺");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("tv_korean");
+            category.setType_name("韩剧");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("tv_japanese");
+            category.setType_name("日剧");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("suggestion_movie");
+            category.setType_name("电影推荐");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("suggestion_tv");
+            category.setType_name("电视剧推荐");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("movie_top250");
+            category.setType_name("电影Top250");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("movie_real_time_hotest");
+            category.setType_name("实时热门电影");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("movie_weekly_best");
+            category.setType_name("一周口碑电影榜");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("tv_real_time_hotest");
+            category.setType_name("实时热门电视");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("tv_chinese_best_weekly");
+            category.setType_name("华语口碑剧集榜");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("tv_global_best_weekly");
+            category.setType_name("全球口碑剧集榜");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("show_chinese_best_weekly");
+            category.setType_name("国内口碑综艺榜");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("show_global_best_weekly");
+            category.setType_name("国外口碑综艺榜");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("local");
+            category.setType_name("浏览");
+            category.setType_flag(0);
+            list.add(category);
+            List<FilterValue> years = new ArrayList<>();
+            years.add(new FilterValue("全部", ""));
+            int year = LocalDate.now().getYear();
+            for (int i = 0; i < 20; ++i) {
+                years.add(new FilterValue(String.valueOf(year - i), String.valueOf(year - i)));
+            }
+            result.getFilters().put("local", List.of(new Filter("sort", "排序", filters), new Filter("genre", "类型", filters2), new Filter("region", "地区", filters3), new Filter("year", "年份", years)));
+        }
+
+        {
+            var category = new Category();
+            category.setType_id("random");
+            category.setType_name("随便看看");
+            category.setType_flag(0);
+            list.add(category);
+        }
+
+        result.setCategories(list);
+        result.setTotal(result.getCategories().size());
+        result.setLimit(result.getCategories().size());
+
+        log.debug("category result: {}", result);
+        return result;
+    }
+
+    public MovieList listDouban(String type, String sort, Integer year, String genre, String region, int page) {
+        if (type.startsWith("s:")) {
+            return searchMovies(type.substring(2), 30);
+        }
+
+        return getDoubanList(type, sort, year, genre, region, page);
+    }
+
+    private MovieList getDoubanList(String type, String sort, Integer year, String genre, String region, int page) {
+        String key = type + "-" + page;
+        MovieList result = douban.getIfPresent(key);
+        if (result != null) {
+            return result;
+        }
+
+        if (type.equals("local")) {
+            return getLocalMovieList(sort, year, genre, region, page);
+        }
+
+        if (type.equals("random")) {
+            return getRandomMovie();
+        }
+
+        if (type.startsWith("suggestion_")) {
+            return getDoubanItems(type, page);
+        }
+
+        if (type.startsWith("hot_")) {
+            return getDoubanItems(type, page);
+        }
+
+        result = new MovieList();
+        List<MovieDetail> list = new ArrayList<>();
+
+        int size = 30;
+        int start = (page - 1) * size;
+        String url = "https://m.douban.com/rexxar/api/v2/subject_collection/" + type + "/items?os=linux&for_mobile=1&callback=&start=" + start + "&count=" + size + "&loc_id=108288&_=0";
+        HttpEntity<Void> httpEntity = buildHttpEntity();
+
+        var response = restTemplate.exchange(url, HttpMethod.GET, httpEntity, JsonNode.class);
+        int total = response.getBody().get("total").asInt();
+        ArrayNode items = (ArrayNode) response.getBody().get("subject_collection_items");
+        for (JsonNode item : items) {
+            MovieDetail movieDetail = getMovieDetail(item);
+            list.add(movieDetail);
+        }
+
+        result.setList(list);
+        result.setLimit(list.size());
+        result.setTotal(total);
+        result.setPagecount((total + size - 1) / size);
+
+        douban.put(key, result);
+        log.debug("list result: {}", result);
+        return result;
+    }
+
+    private MovieList getLocalMovieList(String sort, Integer year, String genre, String region, int page) {
+        MovieList result;
+        result = new MovieList();
+        List<MovieDetail> list = new ArrayList<>();
+
+        int size = 30;
+        Pageable pageable;
+        if (StringUtils.isNotBlank(sort)) {
+            List<Sort.Order> orders = new ArrayList<>();
+            for (String item : sort.split(";")) {
+                String[] parts = item.split(",");
+                Sort.Order order = parts[1].equals("asc") ? Sort.Order.asc(parts[0]) : Sort.Order.desc(parts[0]);
+                orders.add(order);
+            }
+            pageable = PageRequest.of(page - 1, size, Sort.by(orders));
+        } else {
+            pageable = PageRequest.of(page - 1, size);
+        }
+
+        Page<Movie> res = searchMovies(year, genre, region, pageable);
+        int total = (int) res.getTotalElements();
+
+        for (Movie movie : res) {
+            MovieDetail movieDetail = new MovieDetail();
+            movieDetail.setVod_id("s:" + movie.getName());
+            movieDetail.setVod_name(movie.getName());
+            movieDetail.setVod_pic(movie.getCover());
+            movieDetail.setVod_remarks(movie.getDbScore());
+            movieDetail.setVod_tag(FOLDER);
+            movieDetail.setCate(new CategoryList());
+            list.add(movieDetail);
+        }
+
+        result.setList(list);
+        result.setLimit(list.size());
+        result.setTotal(total);
+        result.setPagecount(res.getTotalPages());
+
+        log.debug("list result: {}", result);
+        return result;
+    }
+
+    public Page<Movie> searchMovies(Integer year, String genre, String region, Pageable pageable) {
+        ExampleMatcher matcher = ExampleMatcher.matching()
+                .withStringMatcher(ExampleMatcher.StringMatcher.CONTAINING)
+                .withIgnoreNullValues();
+
+        Movie movie = new Movie();
+        if (year != null) {
+            movie.setYear(year);
+        }
+        if (StringUtils.isNotBlank(genre)) {
+            movie.setGenre(genre);
+        }
+        if (StringUtils.isNotBlank(region)) {
+            movie.setCountry(region);
+        }
+        Example<Movie> example = Example.of(movie, matcher);
+        return movieRepository.findAll(example, pageable);
+    }
+
+    private MovieList getRandomMovie() {
+        MovieList result = new MovieList();
+        List<MovieDetail> list = new ArrayList<>();
+
+        int total = (int) movieRepository.count();
+        int size = 30;
+        int count = size + size / 2;
+        int page = ThreadLocalRandom.current().nextInt(total / count);
+        Collections.shuffle(fields);
+        List<Sort.Order> orders = fields.stream().limit(3).map(e -> ThreadLocalRandom.current().nextBoolean() ? Sort.Order.asc(e) : Sort.Order.desc(e)).toList();
+        Sort sort = Sort.by(orders);
+        Pageable pageable = PageRequest.of(page, count, sort);
+        Page<Movie> res = movieRepository.findAll(pageable);
+
+        List<Movie> movies = new ArrayList<>(res.getContent());
+        Collections.shuffle(movies);
+
+        for (Movie movie : movies.subList(0, size)) {
+            MovieDetail movieDetail = new MovieDetail();
+            movieDetail.setVod_id("s:" + movie.getName());
+            movieDetail.setVod_name(movie.getName());
+            movieDetail.setVod_pic(movie.getCover());
+            movieDetail.setVod_remarks(movie.getDbScore());
+            movieDetail.setVod_tag(FOLDER);
+            movieDetail.setCate(new CategoryList());
+            list.add(movieDetail);
+        }
+
+        result.setList(list);
+        result.setLimit(list.size());
+        result.setTotal(total);
+        result.setPagecount((total + size - 1) / size);
+
+        log.debug("list result: {}", result);
+        return result;
+    }
+
+    private MovieList getDoubanItems(String type, int page) {
+        String key = type + "-" + page;
+        int size = 30;
+        int start = (page - 1) * size;
+        String url = "https://m.douban.com/rexxar/api/v2/subject/recent_hot/movie?limit=" + size + "&start=" + start;
+        if (type.equals("hot_tv")) {
+            url = "https://m.douban.com/rexxar/api/v2/subject/recent_hot/tv?limit=" + size + "&start=" + start;
+        } else if (type.equals("suggestion_movie")) {
+            url = "https://m.douban.com/rexxar/api/v2/movie/suggestion?start=" + start + "&count=" + size + "&new_struct=1&with_review=1&for_mobile=1";
+        } else if (type.equals("suggestion_tv")) {
+            url = "https://m.douban.com/rexxar/api/v2/tv/suggestion?start=" + start + "&count=" + size + "&new_struct=1&with_review=1&for_mobile=1";
+        }
+
+        MovieList result = new MovieList();
+        List<MovieDetail> list = new ArrayList<>();
+
+        HttpEntity<Void> httpEntity = buildHttpEntity();
+
+        var response = restTemplate.exchange(url, HttpMethod.GET, httpEntity, JsonNode.class);
+        int total = response.getBody().get("total").asInt();
+        ArrayNode items = (ArrayNode) response.getBody().get("items");
+        for (JsonNode item : items) {
+            MovieDetail movieDetail = getMovieDetail(item);
+            list.add(movieDetail);
+        }
+
+        result.setList(list);
+        result.setLimit(list.size());
+        result.setTotal(total);
+        result.setPagecount((total + size - 1) / size);
+
+        douban.put(key, result);
+        log.debug("list result: {}", result);
+        return result;
+    }
+
+    private static HttpEntity<Void> buildHttpEntity() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set(HttpHeaders.ACCEPT_LANGUAGE, "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7,ja;q=0.6,zh-TW;q=0.5");
+        headers.set(HttpHeaders.ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7");
+        headers.set(HttpHeaders.REFERER, "https://movie.douban.com/");
+        headers.set(HttpHeaders.USER_AGENT, Utils.getUserAgent());
+        return new HttpEntity<>(null, headers);
+    }
+
+    private static MovieDetail getMovieDetail(JsonNode item) {
+        double score = item.get("rating").get("value").asDouble();
+        MovieDetail movieDetail = new MovieDetail();
+        movieDetail.setVod_id("s:" + item.get("title").asText());
+        movieDetail.setVod_name(item.get("title").asText());
+        movieDetail.setVod_pic(item.get("pic").get("normal").asText());
+        if (score > 0) {
+            movieDetail.setVod_remarks(String.valueOf(score));
+        }
+        movieDetail.setVod_tag(FOLDER);
+        movieDetail.setCate(new CategoryList());
+        return movieDetail;
+    }
+
+    public MovieList searchDouban(String keyword, int size) {
+        MovieList result = new MovieList();
         return result;
     }
 
@@ -489,10 +1025,10 @@ public class TelegramService {
             case "2" -> "迅雷";
             case "3" -> "123";
             case "5" -> "夸克";
+            case "6" -> "移动";
             case "7" -> "UC";
             case "8" -> "115";
             case "9" -> "天翼";
-            case "6" -> "移动";
             case "10" -> "百度";
             default -> null;
         };
@@ -526,7 +1062,7 @@ public class TelegramService {
                 .toUriString();
     }
 
-    public List<Message> search(String keyword, int size) {
+    public List<Message> search(String keyword, int size, boolean cached) {
         List<Message> results = List.of();
         String[] channels = appProperties.getTgChannels().split(",");
         if (StringUtils.isNotBlank(appProperties.getTgSearch())) {
@@ -541,14 +1077,16 @@ public class TelegramService {
             List<Future<List<Message>>> futures = new ArrayList<>();
             for (String channel : channels) {
                 String name = channel.split("\\|")[0];
-                Future<List<Message>> future = executorService.submit(() -> searchFromChannel(name, keyword, size));
+                Future<List<Message>> future = executorService.submit(() -> cached ? searchCache.get(name) : searchFromChannel(name, keyword, size));
                 futures.add(future);
             }
 
             results = getResult(futures);
         }
 
+        List<String> tgDrivers = appProperties.getTgDrivers();
         List<Message> list = results.stream()
+                .filter(e -> tgDrivers.isEmpty() || tgDrivers.contains(e.getType()))
                 .filter(e -> !e.getContent().toLowerCase().contains("pdf"))
                 .filter(e -> !e.getContent().toLowerCase().contains("epub"))
                 .filter(e -> !e.getContent().toLowerCase().contains("azw3"))
@@ -558,11 +1096,21 @@ public class TelegramService {
                 .filter(e -> !e.getContent().contains("图书"))
                 .filter(e -> !e.getContent().contains("电子书"))
                 .filter(e -> !e.getContent().contains("分享文件："))
-                .sorted(Comparator.comparing(Message::getTime).reversed())
+                .sorted(comparator())
                 .distinct()
                 .toList();
         log.info("Search {} get {} results from {} channels.", keyword, list.size(), channels.length);
         return list;
+    }
+
+    private Comparator<Message> comparator() {
+        Comparator<Message> type = Comparator.comparing(a -> appProperties.getTgDriverOrder().indexOf(a.getType()));
+        return switch (appProperties.getTgSortField()) {
+            case "type" -> type.thenComparing(Comparator.comparing(Message::getTime).reversed());
+            case "name" -> Comparator.comparing(Message::getName);
+            case "channel" -> Comparator.comparing(Message::getChannel).thenComparing(Comparator.comparing(Message::getTime).reversed());
+            default -> Comparator.comparing(Message::getTime).reversed();
+        };
     }
 
     private List<Message> searchRemote(String channels, String keyword, int size) {
@@ -614,6 +1162,10 @@ public class TelegramService {
         incompleteFutures.forEach(f -> f.cancel(true));
 
         return results;
+    }
+
+    private List<Message> getFromChannel(String username) throws IOException {
+        return searchFromChannel(username, "", 100);
     }
 
     public List<Message> searchFromChannel(String username, String keyword, int size) throws IOException {

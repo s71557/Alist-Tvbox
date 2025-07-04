@@ -80,6 +80,14 @@ public class TaskService {
         return taskRepository.save(task);
     }
 
+    public Task addDownloadTask(String name) {
+        Task task = new Task();
+        task.setType(TaskType.DOWNLOAD);
+        task.setName("下载文件 - " + name);
+        task.setCreatedTime(Instant.now());
+        return taskRepository.save(task);
+    }
+
     public Task addSyncMeta() {
         Task task = new Task();
         task.setType(TaskType.SYNC_META);
@@ -147,6 +155,23 @@ public class TaskService {
         task.setEndTime(Instant.now());
         task.setError(error);
         taskRepository.save(task);
+    }
+
+    public boolean waitTaskFinish(Integer id, int timeout) {
+        int count = 0;
+        while (count++ < timeout) {
+            Task task = getById(id);
+            if (task.getStatus() == TaskStatus.COMPLETED) {
+                return true;
+            }
+
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                break;
+            }
+        }
+        return false;
     }
 
     public void cancelAll() {

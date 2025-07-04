@@ -8,6 +8,8 @@ import cn.har01d.alist_tvbox.entity.AListAlias;
 import cn.har01d.alist_tvbox.entity.AListAliasRepository;
 import cn.har01d.alist_tvbox.entity.Account;
 import cn.har01d.alist_tvbox.entity.AccountRepository;
+import cn.har01d.alist_tvbox.entity.Device;
+import cn.har01d.alist_tvbox.entity.DeviceRepository;
 import cn.har01d.alist_tvbox.entity.DriverAccount;
 import cn.har01d.alist_tvbox.entity.DriverAccountRepository;
 import cn.har01d.alist_tvbox.entity.Meta;
@@ -33,26 +35,33 @@ import cn.har01d.alist_tvbox.tvbox.MovieList;
 import cn.har01d.alist_tvbox.util.Constants;
 import cn.har01d.alist_tvbox.util.TextUtils;
 import cn.har01d.alist_tvbox.util.Utils;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
+import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -94,6 +103,7 @@ public class TvBoxService {
     private final ShareRepository shareRepository;
     private final MetaRepository metaRepository;
     private final DriverAccountRepository driverAccountRepository;
+    private final DeviceRepository deviceRepository;
 
     private final AListService aListService;
     private final IndexService indexService;
@@ -106,7 +116,10 @@ public class TvBoxService {
     private final TenantService tenantService;
     private final SettingService settingService;
     private final AListLocalService aListLocalService;
+    private final ProxyService proxyService;
     private final ObjectMapper objectMapper;
+    private final RestTemplate restTemplate;
+
     private final ExecutorService executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
     private final Cache<Integer, List<String>> cache = Caffeine.newBuilder()
             .maximumSize(10)
@@ -149,6 +162,7 @@ public class TvBoxService {
                         AListAliasRepository aliasRepository,
                         ShareRepository shareRepository,
                         MetaRepository metaRepository,
+                        DeviceRepository deviceRepository,
                         AListService aListService,
                         IndexService indexService,
                         SiteService siteService,
@@ -162,11 +176,14 @@ public class TvBoxService {
                         AListLocalService aListLocalService,
                         ObjectMapper objectMapper,
                         DriverAccountRepository driverAccountRepository,
+                        ProxyService proxyService,
+                        RestTemplateBuilder builder,
                         PikPakAccountRepository pikPakAccountRepository) {
         this.accountRepository = accountRepository;
         this.aliasRepository = aliasRepository;
         this.shareRepository = shareRepository;
         this.metaRepository = metaRepository;
+        this.deviceRepository = deviceRepository;
         this.aListService = aListService;
         this.indexService = indexService;
         this.siteService = siteService;
@@ -180,6 +197,8 @@ public class TvBoxService {
         this.aListLocalService = aListLocalService;
         this.objectMapper = objectMapper;
         this.driverAccountRepository = driverAccountRepository;
+        this.proxyService = proxyService;
+        this.restTemplate = builder.build();
         this.pikPakAccountRepository = pikPakAccountRepository;
     }
 
@@ -827,8 +846,10 @@ public class TvBoxService {
                 log.debug("invalid: {}", path);
                 continue;
             }
+            int pid = proxyService.generatePath(site, path);
             MovieDetail movieDetail = new MovieDetail();
-            movieDetail.setVod_id(site.getId() + "$" + encodeUrl(path) + "$1");
+            movieDetail.setPath(path);
+            movieDetail.setVod_id(site.getId() + "$" + pid + "$1");
             movieDetail.setVod_name(getNameFromPath(line));
             movieDetail.setVod_pic(Constants.ALIST_PIC);
             movieDetail.setVod_content(path.replace(PLAYLIST, ""));
@@ -872,8 +893,10 @@ public class TvBoxService {
                             }
                         }
 
+                        int pid = proxyService.generatePath(site, path);
                         MovieDetail movieDetail = new MovieDetail();
-                        movieDetail.setVod_id(site.getId() + "$" + encodeUrl(path) + "$1");
+                        movieDetail.setPath(path);
+                        movieDetail.setVod_id(site.getId() + "$" + pid + "$1");
                         movieDetail.setVod_name(e.getName());
                         movieDetail.setVod_pic(Constants.ALIST_PIC);
                         movieDetail.setVod_tag(FILE);
@@ -924,7 +947,9 @@ public class TvBoxService {
                     continue;
                 }
             }
-            movieDetail.setVod_id(site.getId() + "$" + encodeUrl(path) + "$1");
+            int pid = proxyService.generatePath(site, path);
+            movieDetail.setPath(path);
+            movieDetail.setVod_id(site.getId() + "$" + pid + "$1");
             movieDetail.setVod_name(getNameFromPath(name));
             movieDetail.setVod_pic(Constants.ALIST_PIC);
             movieDetail.setVod_content(path.replace(PLAYLIST, ""));
@@ -989,6 +1014,13 @@ public class TvBoxService {
     public MovieList getMovieList(String client, String ac, String tid, String filter, String sort, int page, int size) {
         String[] parts = tid.split("\\$");
         String path = parts[1];
+        try {
+            path = proxyService.getPath(Integer.parseInt(path));
+        } catch (NumberFormatException e) {
+            log.debug("", e);
+        } catch (Exception e) {
+            log.warn("", e);
+        }
         int type = 1;
         if (parts.length > 2) {
             type = Integer.parseInt(parts[2]);
@@ -1029,8 +1061,10 @@ public class TvBoxService {
             if (!tenantService.valid(newPath)) {
                 continue;
             }
+            int pid = proxyService.generatePath(site, newPath);
             MovieDetail movieDetail = new MovieDetail();
-            movieDetail.setVod_id(site.getId() + "$" + encodeUrl(newPath) + "$1");
+            movieDetail.setPath(newPath);
+            movieDetail.setVod_id(site.getId() + "$" + pid + "$1");
             movieDetail.setVod_name(fsInfo.getName());
             movieDetail.setVod_tag(fsInfo.getType() == 1 ? FOLDER : FILE);
             movieDetail.setVod_pic(getCover(ac, fsInfo.getThumb(), fsInfo.getType()));
@@ -1299,7 +1333,10 @@ public class TvBoxService {
 
     private MovieDetail generatePlaylist(Site site, String path, int total, List<MovieDetail> files) {
         MovieDetail movieDetail = new MovieDetail();
-        movieDetail.setVod_id(encodeUrl(site.getId() + "$" + fixPath(path + PLAYLIST)) + "$1");
+        path = fixPath(path + PLAYLIST);
+        int pid = proxyService.generatePath(site, path);
+        movieDetail.setPath(path);
+        movieDetail.setVod_id(site.getId() + "$" + pid + "$1");
         movieDetail.setVod_name("播放列表");
         movieDetail.setVod_tag(FILE);
         movieDetail.setVod_pic(getListPic());
@@ -1351,14 +1388,14 @@ public class TvBoxService {
             // ignore
         } else if ((fsDetail.getProvider().contains("Aliyundrive") && !fsDetail.getRawUrl().contains("115cdn.net"))
                 || (("open".equals(client) || "node".equals(client)) && fsDetail.getProvider().contains("115"))) {
-            url = buildAListProxyUrl(site, path, fsDetail.getSign());
+            url = buildProxyUrl(site, name, path);
             log.info("play url: {}", url);
         }
 
         result.put("url", url);
 
         if (isUseProxy(url)) {
-            url = buildAListProxyUrl(site, path, fsDetail.getSign());
+            url = buildProxyUrl(site, name, path);
             result.put("url", url);
         } else if (fsDetail.getProvider().equals("QuarkShare") || fsDetail.getProvider().equals("Quark")) {
             var account = getDriverAccount(url, DriverType.QUARK);
@@ -1574,6 +1611,13 @@ public class TvBoxService {
         Site site = getSite(tid);
         String[] parts = tid.split("\\$");
         String path = parts[1];
+        try {
+            path = proxyService.getPath(Integer.parseInt(path));
+        } catch (NumberFormatException e) {
+            log.debug("", e);
+        } catch (Exception e) {
+            log.warn("", e);
+        }
         updateShareTime(path);
         if (path.contains(PLAYLIST)) {
             return getPlaylist(ac, site, path);
@@ -1640,7 +1684,7 @@ public class TvBoxService {
             movieDetail.setVod_play_from(site.getName());
             String sign = fsDetail.getSign();
             if ("detail".equals(ac) || "web".equals(ac) || "gui".equals(ac)) {
-                movieDetail.setVod_play_url(buildAListProxyUrl(site, path, sign));
+                movieDetail.setVod_play_url(buildProxyUrl(site, fsDetail.getName(), path));
                 movieDetail.setType(fsDetail.getType());
             } else {
                 movieDetail.setVod_play_url(getFilename(fsDetail) + "$" + buildPlayUrl(site, path));
@@ -1696,10 +1740,6 @@ public class TvBoxService {
         return filename;
     }
 
-    private String buildPlayUrl(Site site, String path) {
-        return encodeUrl(site.getId() + "~~~" + path);
-    }
-
     public List<FileItem> browse(String path) {
         List<FileItem> files = aListService.browse(1, path);
         for (FileItem item : files) {
@@ -1749,8 +1789,10 @@ public class TvBoxService {
             throw new BadRequestException("加载文件失败: " + newPath);
         }
 
+        int pid = proxyService.generatePath(site, path);
         MovieDetail movieDetail = new MovieDetail();
-        movieDetail.setVod_id(site.getId() + "$" + encodeUrl(path) + "$1");
+        movieDetail.setPath(path);
+        movieDetail.setVod_id(site.getId() + "$" + pid + "$1");
         movieDetail.setVod_name(fsDetail.getName());
         movieDetail.setVod_time(fsDetail.getModified());
         movieDetail.setVod_play_from(site.getName());
@@ -1773,6 +1815,7 @@ public class TvBoxService {
         if (files.isEmpty()) {
             List<String> folders = fsResponse.getFiles().stream().map(FsInfo::getName).filter(this::isFolder).collect(Collectors.toList());
             log.info("load media files from folders: {}", folders);
+            int source = 0;
             for (String folder : folders) {
                 fsResponse = aListService.listFiles(site, newPath + "/" + folder, 1, 0);
                 files = fsResponse.getFiles().stream()
@@ -1791,18 +1834,20 @@ public class TvBoxService {
                     fileNames.sort(Comparator.comparing(FileNameInfo::new));
                 }
 
+                int index = 0;
                 List<String> urls = new ArrayList<>();
                 for (String name : fileNames) {
                     String filepath = newPath + "/" + folder + "/" + name;
                     String newName = fixName(name, prefix, suffix) + "(" + Utils.byte2size(size.get(name)) + ")";
                     if ("detail".equals(ac) || "web".equals(ac) || "gui".equals(ac)) {
-                        String url = buildProxyUrl(site.getId() + "$" + filepath);
+                        String url = buildProxyUrl(site, source, index++, name, filepath);
                         urls.add(newName + "$" + url);
                     } else {
-                        String url = buildPlayUrl(site, filepath);
+                        String url = buildPlayUrl(site, source, index++, filepath);
                         urls.add(newName + "$" + url);
                     }
                 }
+                source++;
                 list.add(String.join("#", urls));
             }
             String prefix = Utils.getCommonPrefix(folders);
@@ -1825,14 +1870,15 @@ public class TvBoxService {
                 fileNames.sort(Comparator.comparing(FileNameInfo::new));
             }
 
+            int index = 0;
             for (String name : fileNames) {
                 String filepath = newPath + "/" + name;
                 String newName = fixName(name, prefix, suffix) + "(" + Utils.byte2size(size.get(name)) + ")";
                 if ("detail".equals(ac) || "web".equals(ac) || "gui".equals(ac)) {
-                    String url = buildProxyUrl(site.getId() + "$" + filepath);
+                    String url = buildProxyUrl(site, 0, index++, name, filepath);
                     list.add(newName + "$" + url);
                 } else {
-                    String url = buildPlayUrl(site, filepath);
+                    String url = buildPlayUrl(site, 0, index++, filepath);
                     list.add(newName + "$" + url);
                 }
             }
@@ -2268,7 +2314,7 @@ public class TvBoxService {
         if (url.startsWith("http://localhost")) {
             String proxy = ServletUriComponentsBuilder.fromCurrentRequest()
                     .scheme(appProperties.isEnableHttps() && !Utils.isLocalAddress() ? "https" : "http") // nginx https
-                    .port(aListLocalService.getPort())
+                    .port(aListLocalService.getExternalPort())
                     .replacePath("/")
                     .replaceQuery("")
                     .build()
@@ -2281,12 +2327,32 @@ public class TvBoxService {
         return url;
     }
 
+    private String buildPlayUrl(Site site, String path) {
+        return site.getId() + "@" + proxyService.generateProxyUrl(site, path);
+    }
+
+    private String buildPlayUrl(Site site, int source, int index, String path) {
+        return site.getId() + "@" + proxyService.generateProxyUrl(site, path) + "@" + source + "@" + index;
+    }
+
     // AList-TvBox proxy
-    private String buildProxyUrl(String path) {
+    private String buildProxyUrl(Site site, String name, String path) {
+        String p = "/p/" + subscriptionService.getCurrentToken() + "/" + site.getId() + "@" + proxyService.generateProxyUrl(site, path);
         return ServletUriComponentsBuilder.fromCurrentRequest()
                 .scheme(appProperties.isEnableHttps() && !Utils.isLocalAddress() ? "https" : "http") // nginx https
-                .replacePath("/p/" + subscriptionService.getCurrentToken())
-                .replaceQuery("path=" + encodeUrl(path))
+                .replacePath(p)
+                .replaceQuery("name=" + name)
+                .build()
+                .toUriString();
+    }
+
+    // AList-TvBox proxy
+    private String buildProxyUrl(Site site, int source, int index, String name, String path) {
+        String p = "/p/" + subscriptionService.getCurrentToken() + "/" + site.getId() + "@" + proxyService.generateProxyUrl(site, path) + "@" + source + "@" + index;
+        return ServletUriComponentsBuilder.fromCurrentRequest()
+                .scheme(appProperties.isEnableHttps() && !Utils.isLocalAddress() ? "https" : "http") // nginx https
+                .replacePath(p)
+                .replaceQuery("name=" + name)
                 .build()
                 .toUriString();
     }
@@ -2295,7 +2361,7 @@ public class TvBoxService {
     private String buildAListProxyUrl(Site site, String path, String sign) {
         if (site.getUrl().startsWith("http://localhost")) {
             return ServletUriComponentsBuilder.fromCurrentRequest()
-                    .port(aListLocalService.getPort())
+                    .port(aListLocalService.getExternalPort())
                     .replacePath("/p" + path)
                     .replaceQuery(StringUtils.isBlank(sign) ? "" : "sign=" + sign)
                     .build()
@@ -2317,7 +2383,7 @@ public class TvBoxService {
     private String buildUrl(Site site, String path) {
         if (site == null || site.getUrl().startsWith("http://localhost")) {
             return ServletUriComponentsBuilder.fromCurrentRequest()
-                    .port(aListLocalService.getPort())
+                    .port(aListLocalService.getExternalPort())
                     .replacePath(path)
                     .replaceQuery(null)
                     .build()
@@ -2338,6 +2404,106 @@ public class TvBoxService {
                 .scheme(appProperties.isEnableHttps() && !Utils.isLocalAddress() ? "https" : "http") // nginx https
                 .replacePath("/m3u8/" + subscriptionService.getCurrentToken())
                 .replaceQuery("path=" + encodeUrl(path))
+                .build()
+                .toUriString();
+    }
+
+    public String getQrCode() throws IOException {
+        return Utils.getQrCode(buildTvUrl());
+    }
+
+    public int scanDevices(HttpServletRequest request) {
+        String localIp = Utils.getClientIp(request);
+        if (localIp == null) {
+            log.warn("无法获取本地IP地址");
+            return 0;
+        }
+
+        String networkPrefix = localIp.substring(0, localIp.lastIndexOf('.') + 1);
+        log.info("扫描网段: {}0/24", networkPrefix);
+        int count = 0;
+        for (int i = 1; i < 255; i++) {
+            String host = networkPrefix + i;
+            if (isPortOpen(host)) {
+                log.debug("add device from {}", host);
+                try {
+                    addDevice(host);
+                    count++;
+                } catch (JsonProcessingException e) {
+                    log.warn("{}", host, e);
+                }
+            }
+        }
+        log.info("扫描完成，添加了{}个设备", count);
+        return count;
+    }
+
+    private static boolean isPortOpen(String ip) {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(ip, 9978), 20);
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    public Device device(HttpServletRequest request) {
+        try {
+            Device device = getClientDevice(request);
+            if (device != null) {
+                return device;
+            }
+        } catch (Exception e) {
+            log.warn("get client device failed", e);
+        }
+
+        return myDevice();
+    }
+
+    public Device myDevice() {
+        Device device = new Device();
+        device.setId(99);
+        device.setIp(buildTvUrl());
+        device.setName("AList TvBox");
+        device.setUuid(settingService.get("system_id").getValue());
+        return device;
+    }
+
+    private Device getClientDevice(HttpServletRequest request) throws JsonProcessingException {
+        String ipAddress = Utils.getClientIp(request);
+        return addDevice(ipAddress);
+    }
+
+    public Device addDevice(String ipAddress) throws JsonProcessingException {
+        String url = ipAddress;
+        if (!url.startsWith("http://")) {
+            url = "http://" + ipAddress + ":9978/device";
+        } else if (!url.endsWith("/device")) {
+            url = url + "/device";
+        }
+
+        try {
+            String json = restTemplate.getForObject(url, String.class);
+            Device device = objectMapper.readValue(json, Device.class);
+            if (device != null) {
+                Device exist = deviceRepository.findByUuid(device.getUuid());
+                if (exist != null) {
+                    device.setId(exist.getId());
+                }
+                deviceRepository.save(device);
+                return device;
+            }
+        } catch (ResourceAccessException e) {
+            throw new BadRequestException("无法访问设备", e);
+        }
+        return null;
+    }
+
+    private String buildTvUrl() {
+        return ServletUriComponentsBuilder.fromCurrentRequest()
+                .scheme(appProperties.isEnableHttps() && !Utils.isLocalAddress() ? "https" : "http") // nginx https
+                .replacePath("/tv")
+                .replaceQuery(null)
                 .build()
                 .toUriString();
     }

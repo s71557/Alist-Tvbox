@@ -24,6 +24,25 @@ while getopts ":d:p:P:v:" arg; do
     esac
 done
 
+shift $((OPTIND-1))
+
+if [ $# -gt 0 ]; then
+  BASE_DIR=$1
+fi
+
+if [ $# -gt 1 ]; then
+	PORT1=$2
+fi
+
+if [ $# -gt 2 ]; then
+	PORT2=$3
+fi
+
+if [ $# -gt 3 ]; then
+	MEM_OPT="-Xmx${4}M"
+	echo "Java Memory: ${MEM_OPT}"
+fi
+
 rm -rf src/main/resources/static/assets && \
 cd web-ui && \
 npm run build || exit 1
@@ -41,10 +60,12 @@ cd target && java -Djarmode=layertools -jar alist-tvbox-1.0.jar extract && cd ..
 export TZ=Asia/Shanghai
 echo $((($(date +%Y) - 2023) * 366 + $(date +%j | sed 's/^0*//'))).$(date +%H%M) > data/version
 echo "build haroldli/alist-tvbox:latest"
-docker build --tag=haroldli/alist-tvbox:latest .
+docker build -f docker/Dockerfile --tag=haroldli/alist-tvbox:latest .
 
 echo -e "\e[36m使用配置目录：\e[0m $BASE_DIR"
 echo -e "\e[36m端口映射：\e[0m $PORT1:4567  $PORT2:5244"
+
+sudo systemctl stop atv
 
 docker rm -f xiaoya-tvbox alist-tvbox 2>/dev/null
 docker run -d -p $PORT1:4567 -p $PORT2:5244 -e ALIST_PORT=$PORT2 -e INSTALL=new -v "$BASE_DIR":/data -v "$BASE_DIR/alist":/opt/alist/data ${MOUNT} --name=alist-tvbox haroldli/alist-tvbox:latest

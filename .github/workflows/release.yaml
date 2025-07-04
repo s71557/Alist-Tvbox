@@ -20,7 +20,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: ./web-ui
 
@@ -35,9 +35,8 @@ jobs:
       - name: Setup GraalVM
         uses: graalvm/setup-graalvm@v1
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'graalvm'
-          components: 'native-image'
           native-image-musl: 'true'
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: 'maven'
@@ -59,11 +58,19 @@ jobs:
         with:
           files: |
             target/alist-tvbox-1.0.jar
+            target/alist-tvbox-1.0.jar.original
             target/atv.tar.gz
 
       - name: Send version
         env:
           api: ${{ secrets.VERSION_API }}
+        if: ${{ env.api != '' }}
+        run: |
+          curl -s "${{ env.api }}?type=app&version=${{ github.ref_name }}"
+
+      - name: Send notification
+        env:
+          api: ${{ secrets.NOTIFY_API }}
         if: ${{ env.api != '' }}
         run: |
           curl -s "${{ env.api }}?type=app&version=${{ github.ref_name }}"

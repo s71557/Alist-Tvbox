@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: ${{ inputs.branch }}
       - name: show info
@@ -38,9 +38,9 @@ jobs:
           echo "release: ${{ inputs.release }}"
           echo "HEAD_MESSAGE=$(git log -1 --pretty=%B)" >> $GITHUB_ENV
       - name: Setup node
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 18.16.x
+          node-version: 22
           cache: npm
           cache-dependency-path: ./web-ui
       - name: Install npm
@@ -78,30 +78,30 @@ jobs:
           cp data/version data/app_version
           cat data/version
       - name: Build docker and push
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile-xiaoya
+          file: docker/Dockerfile-xiaoya
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox:${{ inputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Build host mode docker and push
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile-host
+          file: docker/Dockerfile-host
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/xiaoya-tvbox:hostmode-${{ inputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Build standalone docker and push
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile
+          file: docker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/alist-tvbox:${{ inputs.tag }}

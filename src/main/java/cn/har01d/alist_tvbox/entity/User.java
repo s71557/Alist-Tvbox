@@ -19,7 +19,7 @@ import java.util.Objects;
 @ToString
 @RequiredArgsConstructor
 @Entity
-@Table(name = "users")
+@Table(name = "x_user")
 public class User {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

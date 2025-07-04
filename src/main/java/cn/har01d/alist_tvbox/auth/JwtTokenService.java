@@ -40,14 +40,14 @@ public class JwtTokenService implements TokenService {
     @PostConstruct
     public void init() throws IOException {
         Path path = Utils.getDataPath(".jwt");
+        String secret;
         if (Files.exists(path)) {
-            String secret = Files.readString(path);
-            appProperties.setSecretKey(secret);
+            secret = Files.readString(path);
         } else {
-            String secret = UUID.randomUUID().toString();
+            secret = "AList-TvBox:" +  UUID.randomUUID();
             Files.writeString(path, secret);
-            appProperties.setSecretKey(secret);
         }
+        appProperties.setSecretKey(secret);
     }
 
     @Override

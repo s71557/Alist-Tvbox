@@ -321,15 +321,6 @@ public class BiliBiliService {
         this.objectMapper = objectMapper;
     }
 
-    @PostConstruct
-    public void setup() {
-        if (!settingRepository.existsById("api_key")) {
-            String apiKey = UUID.randomUUID().toString();
-            log.debug("generate api key: {}", apiKey);
-            settingRepository.save(new Setting("api_key", apiKey));
-        }
-    }
-
     public Map<String, Object> updateCookie(CookieData cookieData) {
         settingRepository.save(new Setting(BILIBILI_COOKIE, cookieData.getCookie()));
         return getLoginStatus();
@@ -382,7 +373,7 @@ public class BiliBiliService {
 
     public QrCode scanLogin() throws IOException {
         QrCode qrCode = restTemplate.getForObject("https://passport.bilibili.com/x/passport-login/web/qrcode/generate", BiliBiliQrCodeResponse.class).getData();
-        qrCode.setImage(BiliBiliUtils.getQrCode(qrCode.getUrl()));
+        qrCode.setImage(Utils.getQrCode(qrCode.getUrl()));
         log.debug("{}", qrCode);
         return qrCode;
     }

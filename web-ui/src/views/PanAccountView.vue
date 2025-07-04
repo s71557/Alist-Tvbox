@@ -76,7 +76,7 @@
     </el-table>
 
     <el-dialog v-model="formVisible" :title="dialogTitle" width="60%">
-      <el-form :model="form" label-width="auto">
+      <el-form :model="form" label-width="120">
         <el-form-item label="名称" required>
           <el-input v-model="form.name" autocomplete="off"/>
         </el-form-item>
@@ -94,7 +94,7 @@
             <el-radio label="BAIDU" size="large">百度网盘</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="Cookie" required v-if="form.type=='QUARK'||form.type=='UC'||form.type=='PAN115'||form.type=='BAIDU'">
+        <el-form-item label="Cookie" required v-if="form.type=='QUARK'||form.type=='UC'||form.type=='PAN115'||form.type=='BAIDU'||form.type=='CLOUD189'">
           <el-input v-model="form.cookie" @change="getInfo" type="textarea" :rows="5"/>
           <span v-if="form.type=='QUARK'">
             <a href="https://pan.quark.cn/" target="_blank">夸克网盘</a>
@@ -118,6 +118,12 @@
             <a href="https://pan.baidu.com/disk/main" target="_blank">百度网盘</a>
             <span class="hint">只需要BDUSS</span>
           </span>
+
+          <span v-if="form.type=='CLOUD189'">
+            <a href="https://cloud.189.cn/web/main/" target="_blank">天翼云盘</a>
+            <span class="hint">需要JSESSIONID和COOKIE_LOGIN_USER</span>
+          </span>
+          <el-button class="hint" type="primary" @click="getInfo" v-if="form.cookie">校验Cookie</el-button>
         </el-form-item>
         <el-form-item label="Token" v-if="form.type=='PAN139'" required>
           <el-input v-model="form.token" type="textarea" :rows="3"/>
@@ -136,9 +142,10 @@
           <el-input v-model="form.token" type="textarea" :rows="3"/>
           <el-button type="primary" @click="showQrCode">扫码获取</el-button>
         </el-form-item>
-        <el-form-item label="Access Token" v-if="form.type=='BAIDU'" required>
-          <el-input v-model="form.addition.access_token"/>
+        <el-form-item label="认证令牌" v-if="form.type=='BAIDU'" required>
+          <el-input v-model="form.addition.access_token" @change="fixBaiduToken"/>
           <el-button type="primary" @click="copyLink">获取认证令牌</el-button>
+          <div class="hint">通过认证后复制浏览器链接填入</div>
         </el-form-item>
         <el-form-item label="用户名" v-if="form.type=='THUNDER'||form.type=='CLOUD189'||form.type=='PAN123'" required>
           <el-input v-model="form.username" :placeholder="form.type=='THUNDER'?'+86 12345678900':''"/>
@@ -155,13 +162,16 @@
         <el-form-item label="文件夹ID">
           <el-input v-model="form.folder"/>
         </el-form-item>
+        <el-form-item label="删除码" v-if="form.type=='PAN115'">
+          <el-input type="password" show-password v-model="form.addition.delete_code"/>
+        </el-form-item>
         <el-form-item v-if="form.type=='PAN115'" label="分页大小">
           <el-input-number :min="100" :max="1500" v-model="form.addition.page_size"/>
         </el-form-item>
         <el-form-item v-if="form.type=='PAN115'" label="请求限速">
           <el-input-number :min="1" :max="4" v-model="form.addition.limit_rate"/>
         </el-form-item>
-        <el-form-item v-if="form.type=='PAN115'||form.type=='QUARK'||form.type=='UC'||form.type=='BAIDU'" label="加速代理">
+        <el-form-item v-if="form.type=='PAN115'||form.type=='QUARK'||form.type=='UC'||form.type=='BAIDU'||form.type=='PAN139'" label="加速代理">
           <el-switch
             v-model="form.useProxy"
             inline-prompt
@@ -170,8 +180,11 @@
           />
           <span class="hint">服务端多线程加速，网页播放强制开启</span>
         </el-form-item>
-        <el-form-item v-if="form.type=='PAN115'||form.type=='QUARK'||form.type=='UC'||form.type=='BAIDU'" label="代理线程数">
-          <el-input-number :min="1" :max="16" v-model="form.concurrency"/>
+        <el-form-item v-if="form.type=='PAN115'||form.type=='QUARK'||form.type=='UC'||form.type=='BAIDU'||form.type=='PAN139'" label="代理线程数">
+          <el-input-number :min="1" :max="32" v-model="form.concurrency"/>
+        </el-form-item>
+        <el-form-item v-if="form.type=='PAN115'||form.type=='QUARK'||form.type=='UC'||form.type=='BAIDU'||form.type=='PAN139'" label="分片大小">
+          <el-input-number :min="64" :max="4096" v-model="form.addition.chunk_size"/>
         </el-form-item>
         <el-form-item label="主账号" v-if="!driverRoundRobin&&form.type!='OPEN115'&&form.type!='QUARK_TV'&&form.type!='UC_TV'">
           <el-switch
@@ -181,6 +194,14 @@
             inactive-text="否"
           />
           <span class="hint">主账号用来观看分享</span>
+        </el-form-item>
+        <el-form-item label="自动签到" v-if="form.type=='CLOUD189'">
+          <el-switch
+            v-model="form.addition.auto_checkin"
+            inline-prompt
+            active-text="开启"
+            inactive-text="关闭"
+          />
         </el-form-item>
         <el-form-item label="禁用账号">
           <el-switch
@@ -271,9 +292,12 @@ const form = ref({
   cookie: '',
   token: '',
   addition: {
+    chunk_size: 256,
     page_size: 1000,
     limit_rate: 2,
     access_token: '',
+    delete_code: '',
+    auto_checkin: false,
   },
   username: '',
   password: '',
@@ -337,9 +361,12 @@ const handleAdd = () => {
     cookie: '',
     token: '',
     addition: {
+      chunk_size: 256,
       page_size: 1000,
       limit_rate: 2,
       access_token: '',
+      delete_code: '',
+      auto_checkin: false,
     },
     username: '',
     password: '',
@@ -471,7 +498,7 @@ const getInfo = () => {
     return
   }
   const data = Object.assign({}, form.value, {addition: JSON.stringify(form.value.addition)})
-  axios.post('/api/pan/accounts/-/info', data).then(({data}) => {
+  axios.post('/api/pan/accounts/-/info?type=cookie', data).then(({data}) => {
     if (data && data.name) {
       ElMessage.success('Cookie有效：' + data.name)
       if (!form.value.name) {
@@ -488,6 +515,21 @@ const copyLink = () => {
   toClipboard(url).then(() => {
     ElMessage.success('链接已复制，在新页面打开')
   })
+}
+
+const fixBaiduToken = () => {
+  let token = form.value.addition.access_token
+  if (token) {
+    let index = token.indexOf('access_token=')
+    if (index > -1) {
+      token = token.substring(index + 13)
+      index = token.indexOf('&')
+      if (index > 0) {
+        token = token.substring(0, index)
+      }
+      form.value.addition.access_token = token
+    }
+  }
 }
 
 const getRefreshToken = () => {

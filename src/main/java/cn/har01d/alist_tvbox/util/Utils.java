@@ -3,6 +3,12 @@ package cn.har01d.alist_tvbox.util;
 import cn.har01d.alist_tvbox.exception.BadRequestException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.WriterException;
+import com.google.zxing.client.j2se.MatrixToImageWriter;
+import com.google.zxing.common.BitMatrix;
+import com.google.zxing.qrcode.QRCodeWriter;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.xml.bind.DatatypeConverter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
@@ -11,6 +17,7 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -24,6 +31,7 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -159,7 +167,7 @@ public final class Utils {
         }
 
         try {
-            return URLEncoder.encode(value, StandardCharsets.UTF_8.toString());
+            return URLEncoder.encode(value, StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new BadRequestException(e);
         }
@@ -201,18 +209,6 @@ public final class Utils {
         return result + " " + unit;
     }
 
-    public static String getPaths(String content) {
-        StringBuilder sb = new StringBuilder();
-        for (String line : content.split("\\n")) {
-            if (line.split(":").length == 2) {
-                sb.append(line).append("\\n");
-            } else {
-                sb.append("本地:").append(line).append("\\n");
-            }
-        }
-        return sb.toString();
-    }
-
     public static int executeUpdate(String sql) {
         int code = 1;
         try {
@@ -226,16 +222,6 @@ public final class Utils {
         }
         log.debug("executeUpdate {} result: {}", sql, code);
         return code;
-    }
-
-    private static String secure(String text) {
-        return text
-                .replaceAll("\"refresh_token\":\".+?\"", "\"refresh_token\":\"******\"")
-                .replaceAll("\"RefreshToken\":\".+?\"", "\"RefreshToken\":\"*********\"")
-                .replaceAll("\"RefreshTokenOpen\":\".+?\"", "\"RefreshTokenOpen\":\"*********\"")
-                .replaceAll("\"password\":\".+?\"", "\"password\":\"***\"")
-                .replaceAll("'$.password', '.+?'", "'$.password', '***'")
-                ;
     }
 
     public static String executeQuery(String sql) {
@@ -308,11 +294,14 @@ public final class Utils {
     }
 
     public static String getAListPath(String name) {
+        if (name.startsWith("/")) {
+            return name;
+        }
         String base = inDocker ? "/opt/alist/" : "/opt/atv/alist/";
         return base + name;
     }
 
-    public static long durationToSeconds(String duration) {
+    public static int durationToSeconds(String duration) {
         if (StringUtils.isBlank(duration)) {
             return 0;
         }
@@ -439,4 +428,132 @@ public final class Utils {
             throw new RuntimeException(e);
         }
     }
+
+    public static String getClientIp(HttpServletRequest request) {
+        String ip = request.getHeader("X-Forwarded-For");
+
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("Proxy-Client-IP");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("WL-Proxy-Client-IP");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("HTTP_CLIENT_IP");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("HTTP_X_FORWARDED_FOR");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getRemoteAddr();
+        }
+
+        // In case of multiple IPs (comma-separated), take the first one
+        if (ip != null && ip.contains(",")) {
+            ip = ip.split(",")[0];
+        }
+
+        return ip;
+    }
+
+    public static String getQrCode(String text) throws IOException {
+        log.info("get qr code for text: {}", text);
+        if ("true".equals(System.getenv("NATIVE"))) {
+            return getQrCodeByCli(text);
+        }
+
+        byte[] bytes = generateQRCodeImage(text);
+        return Base64.getEncoder().encodeToString(bytes);
+    }
+
+    public static String getQrCodeByCli(String text) throws IOException {
+        try {
+            ProcessBuilder builder = new ProcessBuilder();
+            builder.command("/atv-cli", text);
+            builder.inheritIO();
+            Process process = builder.start();
+            process.waitFor();
+        } catch (Exception e) {
+            log.warn("", e);
+        }
+        Path file = Utils.getWebPath("tvbox", "qr.png");
+        return Base64.getEncoder().encodeToString(Files.readAllBytes(file));
+    }
+
+    public static byte[] generateQRCodeImage(String text) throws IOException {
+        try {
+            return generateQRCodeImage(text, 256, 256);
+        } catch (WriterException e) {
+            throw new IOException("Write qr file failed.", e);
+        }
+    }
+
+    public static byte[] generateQRCodeImage(String text, int width, int height)
+            throws WriterException, IOException {
+        QRCodeWriter qrCodeWriter = new QRCodeWriter();
+        BitMatrix bitMatrix = qrCodeWriter.encode(text, BarcodeFormat.QR_CODE, width, height);
+
+        ByteArrayOutputStream pngOutputStream = new ByteArrayOutputStream();
+        MatrixToImageWriter.writeToStream(bitMatrix, "PNG", pngOutputStream);
+        return pngOutputStream.toByteArray();
+    }
+
+    public static String generateUsername() {
+        String upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        String lower = "abcdefghijklmnopqrstuvwxyz";
+        String digits = "0123456789";
+
+        SecureRandom random = new SecureRandom();
+        StringBuilder password = new StringBuilder();
+
+        password.append(upper.charAt(random.nextInt(upper.length())));
+        password.append(lower.charAt(random.nextInt(lower.length())));
+        password.append(digits.charAt(random.nextInt(digits.length())));
+
+        String all = upper + lower + digits;
+        for (int i = 4; i < 8; i++) {
+            password.append(all.charAt(random.nextInt(all.length())));
+        }
+
+        char[] chars = password.toString().toCharArray();
+        for (int i = 0; i < chars.length; i++) {
+            int j = random.nextInt(chars.length);
+            char temp = chars[i];
+            chars[i] = chars[j];
+            chars[j] = temp;
+        }
+
+        return new String(chars);
+    }
+
+    public static String generateSecurePassword() {
+        String upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        String lower = "abcdefghijklmnopqrstuvwxyz";
+        String digits = "0123456789";
+        String special = "!@#$%^&*";
+
+        SecureRandom random = new SecureRandom();
+        StringBuilder password = new StringBuilder();
+
+        password.append(upper.charAt(random.nextInt(upper.length())));
+        password.append(lower.charAt(random.nextInt(lower.length())));
+        password.append(digits.charAt(random.nextInt(digits.length())));
+        password.append(special.charAt(random.nextInt(special.length())));
+
+        String all = upper + lower + digits + special;
+        for (int i = 4; i < 12; i++) {
+            password.append(all.charAt(random.nextInt(all.length())));
+        }
+
+        char[] chars = password.toString().toCharArray();
+        for (int i = 0; i < chars.length; i++) {
+            int j = random.nextInt(chars.length);
+            char temp = chars[i];
+            chars[i] = chars[j];
+            chars[j] = temp;
+        }
+
+        return new String(chars);
+    }
+
 }

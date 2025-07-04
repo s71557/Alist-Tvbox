@@ -45,6 +45,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.core.env.Environment;
 import org.springframework.core.io.ClassPathResource;
@@ -55,6 +56,7 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -90,7 +92,7 @@ public class ShareService {
     private final SiteRepository siteRepository;
     private final AccountRepository accountRepository;
     private final PikPakAccountRepository pikPakAccountRepository;
-    private final DriverAccountRepository panAccountRepository;
+    private final DriverAccountRepository driverAccountRepository;
     private final AccountService accountService;
     private final AListLocalService aListLocalService;
     private final AListService aListService;
@@ -99,6 +101,7 @@ public class ShareService {
     private final DriverAccountService driverAccountService;
     private final RestTemplate restTemplate;
     private final Environment environment;
+    private final JdbcTemplate alistJdbcTemplate;
 
     private final int offset = 99900;
     private int shareId = 20000;
@@ -111,7 +114,7 @@ public class ShareService {
                         SiteRepository siteRepository,
                         AccountRepository accountRepository,
                         PikPakAccountRepository pikPakAccountRepository,
-                        DriverAccountRepository panAccountRepository,
+                        DriverAccountRepository driverAccountRepository,
                         AListService aListService,
                         DriverAccountService driverAccountService,
                         AppProperties appProperties,
@@ -120,7 +123,8 @@ public class ShareService {
                         ConfigFileService configFileService,
                         PikPakService pikPakService,
                         RestTemplateBuilder builder,
-                        Environment environment) {
+                        Environment environment,
+                        @Qualifier("alistJdbcTemplate") JdbcTemplate alistJdbcTemplate) {
         this.appProperties = appProperties1;
         this.shareRepository = shareRepository;
         this.metaRepository = metaRepository;
@@ -129,7 +133,7 @@ public class ShareService {
         this.siteRepository = siteRepository;
         this.accountRepository = accountRepository;
         this.pikPakAccountRepository = pikPakAccountRepository;
-        this.panAccountRepository = panAccountRepository;
+        this.driverAccountRepository = driverAccountRepository;
         this.aListService = aListService;
         this.driverAccountService = driverAccountService;
         this.accountService = accountService;
@@ -137,7 +141,8 @@ public class ShareService {
         this.configFileService = configFileService;
         this.pikPakService = pikPakService;
         this.environment = environment;
-        this.restTemplate = builder.rootUri("http://localhost:" + (appProperties.isHostmode() ? "5234" : "5244")).build();
+        this.alistJdbcTemplate = alistJdbcTemplate;
+        this.restTemplate = builder.rootUri("http://localhost:" + aListLocalService.getInternalPort()).build();
     }
 
     @PostConstruct
@@ -152,6 +157,7 @@ public class ShareService {
         cleanTempShares();
 
         List<Share> list = shareRepository.findAll();
+        fixPath(list);
 
         if (list.isEmpty()) {
             list = loadSharesFromFile();
@@ -168,13 +174,34 @@ public class ShareService {
         configFileService.writeFiles();
         readTvTxt();
 
-        if (environment.getProperty("INSTALL") == null
-                || "new".equals(environment.getProperty("INSTALL"))
-                || accountRepository.count() > 0
-                || pikPakAccountRepository.count() > 0
-                || panAccountRepository.count() > 0
-                || shareRepository.count() > add.size()) {
-            aListLocalService.startAListServer();
+        aListLocalService.startAListServer();
+    }
+
+    private void fixPath(List<Share> shares) {
+        if (!settingRepository.existsByName("fix_share_path")) {
+            List<Share> changed = new ArrayList<>();
+            for (Share share : shares) {
+                String path = share.getPath();
+                share.setPath(Storage.getMountPath(share));
+                if (!path.equals(share.getPath())) {
+                    changed.add(share);
+                }
+            }
+
+            log.info("fix_share_path {}", changed.size());
+            try {
+                shareRepository.saveAll(changed);
+            } catch (Exception e) {
+                log.warn("fix_share_path error, retry one by one", e);
+                for (Share share : changed) {
+                    try {
+                        shareRepository.save(share);
+                    } catch (Exception e1) {
+                        log.error("fix_share_path error", e1);
+                    }
+                }
+            }
+            settingRepository.save(new Setting("fix_share_path", ""));
         }
     }
 
@@ -582,17 +609,26 @@ public class ShareService {
         return sb;
     }
 
-    public Page<Share> list(Pageable pageable, Integer type) {
+    public Page<Share> list(Pageable pageable, Integer type, String keyword) {
         if (type != null && type > -1) {
-            return shareRepository.findByType(type, pageable);
+            if (StringUtils.isBlank(keyword)) {
+                return shareRepository.findByType(type, pageable);
+            } else {
+                return shareRepository.findByTypeAndPathContains(type, keyword, pageable);
+            }
         }
-        return shareRepository.findAll(pageable);
+
+        if (StringUtils.isBlank(keyword)) {
+            return shareRepository.findAll(pageable);
+        } else {
+            return shareRepository.findByPathContains(keyword, pageable);
+        }
     }
 
     public String getQuarkCookie(String id) {
         String aliSecret = settingRepository.findById(ALI_SECRET).map(Setting::getValue).orElse("");
         if (aliSecret.equals(id)) {
-            return panAccountRepository.findByTypeAndMasterTrue(DriverType.QUARK).map(DriverAccount::getCookie).orElse("").trim();
+            return driverAccountRepository.findByTypeAndMasterTrue(DriverType.QUARK).map(DriverAccount::getCookie).orElse("").trim();
         }
         return "";
     }
@@ -600,7 +636,7 @@ public class ShareService {
     public String getUcCookie(String id) {
         String aliSecret = settingRepository.findById(ALI_SECRET).map(Setting::getValue).orElse("");
         if (aliSecret.equals(id)) {
-            return panAccountRepository.findByTypeAndMasterTrue(DriverType.UC).map(DriverAccount::getCookie).orElse("").trim();
+            return driverAccountRepository.findByTypeAndMasterTrue(DriverType.UC).map(DriverAccount::getCookie).orElse("").trim();
         }
         return "";
     }
@@ -608,7 +644,7 @@ public class ShareService {
     public String get115Cookie(String id) {
         String aliSecret = settingRepository.findById(ALI_SECRET).map(Setting::getValue).orElse("");
         if (aliSecret.equals(id)) {
-            return panAccountRepository.findByTypeAndMasterTrue(DriverType.PAN115).map(DriverAccount::getCookie).orElse("").trim();
+            return driverAccountRepository.findByTypeAndMasterTrue(DriverType.PAN115).map(DriverAccount::getCookie).orElse("").trim();
         }
         return "";
     }
@@ -616,7 +652,7 @@ public class ShareService {
     public String getBaiduCookie(String id) {
         String aliSecret = settingRepository.findById(ALI_SECRET).map(Setting::getValue).orElse("");
         if (aliSecret.equals(id)) {
-            return panAccountRepository.findByTypeAndMasterTrue(DriverType.BAIDU).map(DriverAccount::getCookie).orElse("").trim();
+            return driverAccountRepository.findByTypeAndMasterTrue(DriverType.BAIDU).map(DriverAccount::getCookie).orElse("").trim();
         }
         return "";
     }
@@ -855,6 +891,7 @@ public class ShareService {
         } else {
             share.setShareId(parts[0]);
         }
+        share.setPath(Storage.getMountPath(share));
     }
 
     public String add(ShareLink dto) {

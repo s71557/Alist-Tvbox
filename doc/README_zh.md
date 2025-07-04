@@ -5,21 +5,19 @@ AList代理，支持xiaoya版AList界面管理。
 1. 准备工作：安装Docker
 2. 安装AList-TvBox：
     ```bash
-    sudo bash -c "$(curl -fsSL http://d.har01d.cn/update_xiaoya.sh)"
+    sudo bash -c "$(curl -fsSL http://d.har01d.cn/alist-tvbox.sh)"
     ```
 3. 打开管理界面：http://your-ip:4567/#/accounts
-   默认用户名：admin 密码：admin
 4. 获取并填写阿里token、开放token
 5. 将订阅地址[http://your-ip:4567/sub/0](http://your-ip:4567/sub/0) 输入到TvBox配置
 
 ## 功能
 - 管理界面
 - 海报墙
-- 多个AList站点
-- 多个阿里云盘账号
-- 挂载我的云盘
-- 支持夸克、UC、115、123、天翼、移动、迅雷网盘
-- 支持夸克、UC、115、123、天翼、移动、迅雷分享
+- 多个AList、Emby、Jellyfin站点
+- 多个网盘账号
+- 支持百度、夸克、UC、115、123、天翼、移动、迅雷网盘
+- 支持百度、夸克、UC、115、123、天翼、移动、迅雷分享
 - 自动刷新阿里Token
 - 自定义TvBox配置
 - 安全订阅配置
@@ -32,7 +30,6 @@ AList代理，支持xiaoya版AList界面管理。
 
 ## 安装
 ### 一键安装
-#### 小雅集成版
 不需要再安装小雅版Docker。
 
 如果找不到bash就替换为sh。
@@ -40,46 +37,25 @@ AList代理，支持xiaoya版AList界面管理。
 如果找不到sudo，就用root账号登录，去掉sudo后运行。
 
 ```bash
-sudo bash -c "$(curl -fsSL http://d.har01d.cn/update_xiaoya.sh)"
+sudo bash -c "$(curl -fsSL http://d.har01d.cn/alist-tvbox.sh)"
 ```
-使用其它配置目录：
-```bash
-wget http://d.har01d.cn/update_xiaoya.sh -O update_xiaoya.sh && bash ./update_xiaoya.sh -s /home/user/atv
-```
-挂载本地目录：
-```bash
-wget http://d.har01d.cn/update_xiaoya.sh -O update_xiaoya.sh && bash ./update_xiaoya.sh -v /home/user/Videos:/video
-```
-使用其它端口：
 
-- 第一个参数是挂载的数据目录，默认是/etc/xiaoya。
-- 第二个参数是管理界面端口，默认是4567。
-- 第三个参数是小雅AList端口，默认是5344。
-```bash
-wget http://d.har01d.cn/update_xiaoya.sh -O update_xiaoya.sh && bash ./update_xiaoya.sh -s /home/alist 8080
-wget http://d.har01d.cn/update_xiaoya.sh -O update_xiaoya.sh && bash ./update_xiaoya.sh -s /home/alist 8080 5544
-```
 OpenWrt去掉sudo，或者已经是root账号：
 ```bash
-bash -c "$(curl -fsSL http://d.har01d.cn/update_xiaoya.sh)"
+bash -c "$(curl -fsSL http://d.har01d.cn/alist-tvbox.sh)"
 ```
 
 如果没有安装curl:
 ```bash
-wget http://d.har01d.cn/update_xiaoya.sh; bash ./update_xiaoya.sh
+wget http://d.har01d.cn/alist-tvbox.sh; sudo bash ./alist-tvbox.sh
 ```
 
-#### 内存优化版
-目前仅支持Linux x86_64平台。
-```bash
-sudo bash -c "$(curl -fsSL http://d.har01d.cn/update_native.sh)"
-```
+#### 小雅集成版
+内置了小雅的阿里分享和115分享资源。
 
-#### host网络模式
-使用host网络模式运行：
-```bash
-sudo bash -c "$(curl -fsSL http://d.har01d.cn/update_hostmode.sh)"
-```
+#### 小雅集成版host网络模式
+使用host网络模式运行
+
 使用的端口：
 
 4567 - 管理应用
@@ -92,12 +68,10 @@ sudo bash -c "$(curl -fsSL http://d.har01d.cn/update_hostmode.sh)"
 
 #### 纯净版
 没有内置分享数据、可以直接访问AList管理界面。
-```bash
-sudo bash -c "$(curl -fsSL http://d.har01d.cn/update_new.sh)"
-```
 
-如果要保留AList数据，需要挂载/opt/alist目录。
-比如： -v /etc/xiaoya/alist:/opt/alist
+#### 纯净版（Python运行环境） 小雅版（Python运行环境）
+添加了Python3、pip、telethon运行环境。
+
 #### NAS
 对于群辉等NAS系统，请挂载Docker的/data目录到群辉文件系统，否则数据不会保留。
 #### 创建容器
@@ -112,9 +86,9 @@ sudo bash -c "$(curl -fsSL http://d.har01d.cn/update_new.sh)"
 ### 定时更新
 使用root用户创建corntab定时任务
 ```bash
-wget http://d.har01d.cn/update_xiaoya.sh -O /opt/update_xiaoya.sh
-chmod a+x /opt/update_xiaoya.sh
-crontab -l | { cat; echo "0 2 * * * /opt/update_xiaoya.sh -u"; } | crontab -
+wget http://d.har01d.cn/alist-tvbox.sh -O /opt/alist-tvbox.sh
+chmod a+x /opt/alist-tvbox.sh
+crontab -l | { cat; echo "0 2 * * * /opt/alist-tvbox.sh update -y"; } | crontab -
 ```
 每天凌晨2点检查更新并重启应用。
 
@@ -123,15 +97,15 @@ crontab -l | { cat; echo "0 2 * * * /opt/update_xiaoya.sh -u"; } | crontab -
 
 每天凌晨2点重启应用：
 ```bash
-wget http://d.har01d.cn/update_xiaoya.sh -O /opt/update_xiaoya.sh
-chmod a+x /opt/update_xiaoya.sh
-crontab -l | { cat; echo "0 2 * * * /opt/update_xiaoya.sh"; } | crontab -
+wget http://d.har01d.cn/alist-tvbox.sh -O /opt/alist-tvbox.sh
+chmod a+x /opt/alist-tvbox.sh
+crontab -l | { cat; echo "0 2 * * * /opt/alist-tvbox.sh restart"; } | crontab -
 ```
 每天凌晨2点检查更新：
 ```bash
-wget http://d.har01d.cn/update_xiaoya.sh -O /opt/update_xiaoya.sh
-chmod a+x /opt/update_xiaoya.sh
-crontab -l | { cat; echo "0 2 * * * /opt/update_xiaoya.sh -u"; } | crontab -
+wget http://d.har01d.cn/alist-tvbox.sh -O /opt/alist-tvbox.sh
+chmod a+x /opt/alist-tvbox.sh
+crontab -l | { cat; echo "0 2 * * * /opt/alist-tvbox.sh update -y"; } | crontab -
 ```
 ### 自动更新
 使用docker镜像watchtower实现自动更新。
@@ -148,7 +122,7 @@ docker run -d \
 ```
 
 ### 防火墙
-需要开放管理端口4567和Nginx端口5344（host网络模式是5678）。
+需要开放管理端口4567~~和Nginx端口5344（host网络模式是5678）~~。
 
 如果修改了默认端口，自行替换。
 
@@ -534,14 +508,13 @@ tvbox/my.json和juhe.json不能在TvBox直接使用，请使用订阅地址！
 ![别名页面](https://raw.githubusercontent.com/power721/alist-tvbox/master/doc/atv_alias.png)
 
 ### WebDAV
-如果没有开启强制登录，使用默认密码：
+默认用户名：guest 密码：alist_tvbox
 
-用户: guest
-
-密码: guest_Api789
+开启强制登录AList后，使用在管理界面配置的用户名和密码。
 
 ![WebDAV](https://raw.githubusercontent.com/power721/alist-tvbox/master/doc/webdav.jpg)
 
+4567端口代理了webdav请求。
 ### 电报搜索
 不登陆默认使用网页搜索公开频道资源。
 
@@ -620,7 +593,33 @@ tvbox/my.json和juhe.json不能在TvBox直接使用，请使用订阅地址！
 🎎:我的套娃
 ```
 
-### 数据备份与恢复
+### 使用MySql数据库
+独立服务版编辑配置文件/opt/atv/config/application-production.yaml
+
+Docker版在数据目录创建config目录，创建文件application-production.yaml，
+比如/etc/xiaoya/config/application-production.yaml。
+
+application-production.yaml文件内容示例：
+```yaml
+spring:
+   datasource:
+      jdbc-url: jdbc:mysql://localhost:3306/alist_tvbox?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8
+      username: username
+      password: password
+      driver-class-name: com.mysql.cj.jdbc.Driver
+   jpa:
+      database-platform: org.hibernate.dialect.MySQL8Dialect
+      hibernate:
+         ddl-auto: update
+      show-sql: false
+```
+
+独立服务版编辑配置文件/opt/atv/alist/data/config.json
+Docker版挂载/opt/alist/data/config.json
+
+AList配置参考[alist-mysql.json](../config/alist-mysql.json)
+
+### h2数据备份与恢复
 每天6点自动备份数据库，保存在/etc/xiaoya/backup/目录。
 
 如何恢复？
